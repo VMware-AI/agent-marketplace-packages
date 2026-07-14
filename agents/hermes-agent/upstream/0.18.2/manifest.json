@@ -1,0 +1,97 @@
+{
+  "agent": "hermes-agent",
+  "channel": "stable",
+  "checksums": {
+    "install.sh": "sha256:8db1786fb6f2b22873cd74e4665486de552da30a4bcb5f1593c3ea26729c0318",
+    "payload/hermes_agent-0.18.2-py3-none-any.whl": "sha256:8f02155cfc84b28bd98551cd18dffec0efa9ec070dd08f90f1a850f1c779492f",
+    "runtime/python/bin/python3.12": "sha256:9544d2a29138833e6177d45dbc57468d37710b5080c901fbb579d53f251cdd6f",
+    "runtime/uv/uv": "sha256:1cb9cd0a1749debf6049d7d2bb933882cc52d81016326ee6d99a786d6c988b03",
+    "uninstall.sh": "sha256:e6e969e3da223bc41277387a5304ab369f40d52c7d5a1b2d73d8f8bd6cd9e734"
+  },
+  "fork_of": null,
+  "payload": [
+    {
+      "dst": "{{TARGET_ROOT}}/hermes-agent/0.18.2/cache/hermes_agent-0.18.2-py3-none-any.whl",
+      "mode": "0644",
+      "src": "payload/hermes_agent-0.18.2-py3-none-any.whl"
+    }
+  ],
+  "released_at": "2026-07-14",
+  "requires": {
+    "arch": [
+      "x86_64"
+    ],
+    "os": [
+      "linux"
+    ],
+    "system_packages": [
+      "ca-certificates",
+      "libssl3",
+      "zlib1g",
+      "libffi8",
+      "libsqlite3-0"
+    ],
+    "system_tools": [
+      "tar",
+      "gzip",
+      "sha256sum",
+      "bash",
+      "coreutils",
+      "grep",
+      "sed",
+      "awk",
+      "findutils",
+      "curl"
+    ]
+  },
+  "runtime": [
+    {
+      "install": "{{TARGET_ROOT}}/hermes-agent/runtime/python/",
+      "name": "python",
+      "src": "runtime/python/",
+      "version": "3.12.13"
+    },
+    {
+      "install": "{{TARGET_ROOT}}/hermes-agent/runtime/uv/",
+      "name": "uv",
+      "src": "runtime/uv/",
+      "version": "0.11.28"
+    }
+  ],
+  "schema_version": "1.0",
+  "scripts": {
+    "install": "install.sh",
+    "uninstall": "uninstall.sh"
+  },
+  "source": "upstream",
+  "tarball": {
+    "filename": "hermes-agent-upstream-0.18.2.tar.gz",
+    "sha256": "sha256:b8106c273089e47397c5d839ff9c1952854f931fc04efa99b0e840d5e6a98b36",
+    "signature_type": "none"
+  },
+  "upgrade": {
+    "compatible_from": [
+      "0.18.1",
+      "0.18.0"
+    ],
+    "migrations": [
+      {
+        "from": "0.18.x",
+        "script": "migrate/from-0.18.x.sh"
+      },
+      {
+        "from": "0.17.x",
+        "script": "migrate/from-0.17.x.sh"
+      }
+    ],
+    "strategy": "replace"
+  },
+  "upstream": {
+    "name": "hermes-agent",
+    "notes": "wheel downloaded via Aliyun PyPI mirror (https://mirrors.aliyun.com/pypi/simple/hermes-agent/). Note: hermes-agent has 30+ transitive deps which are NOT bundled here \u2014 install.sh pulls them via uv pip using a real PyPI mirror at install time. For fully-offline installs, use tools/fetch.sh to pre-populate payload/wheels/.",
+    "sha256": "sha256:8f02155cfc84b28bd98551cd18dffec0efa9ec070dd08f90f1a850f1c779492f",
+    "url": "https://mirrors.aliyun.com/pypi/packages/0c/4c/91652c61450763bfe165c65b83026503de0ac9ddad2c11ee522490bf4c2d/hermes_agent-0.18.2-py3-none-any.whl",
+    "version": "0.18.2"
+  },
+  "version": "0.18.2"
+}

@@ -1,0 +1,72 @@
+{
+  "agent": "opencode",
+  "channel": "stable",
+  "checksums": {
+    "install.sh": "sha256:dea93fcacd70a68b997fde01ab52834400875ff79836e0ec10bbc8d9481f31c2",
+    "payload/bin/opencode": "sha256:f7fe18703f9d0cc2352d0a94c8c62bfd378b6681e017a2bbf78c2ecadad75544",
+    "uninstall.sh": "sha256:b71a125cc5b22cdb6aeb8e70cd6c8cf6198c08fc2d1caf072f64d586ce278930"
+  },
+  "fork_of": null,
+  "payload": [
+    {
+      "dst": "{{TARGET_ROOT}}/opencode/0.0.55/bin/opencode",
+      "mode": "0755",
+      "src": "payload/bin/opencode"
+    }
+  ],
+  "released_at": "2025-06-27",
+  "requires": {
+    "arch": [
+      "x86_64"
+    ],
+    "os": [
+      "linux"
+    ],
+    "system_packages": [],
+    "system_tools": [
+      "tar",
+      "gzip",
+      "sha256sum",
+      "bash",
+      "coreutils",
+      "grep",
+      "sed",
+      "awk",
+      "findutils"
+    ]
+  },
+  "runtime": [],
+  "schema_version": "1.0",
+  "scripts": {
+    "install": "install.sh",
+    "uninstall": "uninstall.sh"
+  },
+  "source": "upstream",
+  "tarball": {
+    "filename": "opencode-upstream-0.0.55.tar.gz",
+    "sha256": "sha256:6ab77142cf9e8460e01f25f57c847408c87e314ba32c3472fb67a89a5bd5125c",
+    "signature_type": "none"
+  },
+  "upgrade": {
+    "compatible_from": [
+      "0.0.54",
+      "0.0.53",
+      "0.0.52"
+    ],
+    "migrations": [
+      {
+        "from": "0.0.x",
+        "script": "migrate/from-0.0.x.sh"
+      }
+    ],
+    "strategy": "replace"
+  },
+  "upstream": {
+    "name": "opencode",
+    "notes": "Outer tarball was unpacked and discarded; only the extracted `opencode` binary is preserved as payload/bin/opencode.",
+    "sha256": "sha256:7f1f41203e7920aec48f3e2216d334e9ce8c6d0a7b107ceb758fefa4d4c98025",
+    "url": "https://github.com/opencode-ai/opencode/releases/download/v0.0.55/opencode-linux-x86_64.tar.gz",
+    "version": "0.0.55"
+  },
+  "version": "0.0.55"
+}

@@ -1,0 +1,9 @@
+# Vendored runtimes — go through Git LFS (these are large prebuilt binaries,
+# not source we author)
+agents/**/runtime/**/*            filter=lfs diff=lfs merge=lfs -text
+agents/**/payload/**/*.whl        filter=lfs diff=lfs merge=lfs -text
+agents/**/payload/**/*.tgz        filter=lfs diff=lfs merge=lfs -text
+agents/**/payload/**/*.tar.gz     filter=lfs diff=lfs merge=lfs -text
+agents/**/payload/** filter=lfs diff=lfs merge=lfs -text
+agents/*/upstream/*/runtime/** filter=lfs diff=lfs merge=lfs -text
+agents/*/upstream/*/payload/** filter=lfs diff=lfs merge=lfs -text
