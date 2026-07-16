@@ -1,0 +1,8 @@
+display_name: "Hermes Agent"
+description: "自学习 AI 智能体，从经验中持续生成并改进技能"
+icon: "robot"
+category: "automation"
+tags:
+  - ai
+  - agent
+  - self-improving

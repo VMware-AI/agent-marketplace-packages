@@ -1,0 +1,35 @@
+# docker-compose for marketplace-api.
+#
+# Usage:
+#   cp ../../config/marketplace-api.example.yaml ./config.yaml
+#   cp .env.example .env  # then edit .env to set MARKETPLACE_API_PASSWORD
+#   docker compose up
+#   docker compose restart  # after pushing new tarballs to dist/
+#
+# The dist/ directory is bind-mounted READ-ONLY from the host. The
+# container never writes to dist/. To pick up new packages, push them
+# to dist/ on the host and run `docker compose restart`.
+
+services:
+  marketplace-api:
+    build:
+      context: ../..
+      dockerfile: deploy/docker/Dockerfile
+    image: agent-marketplace/api:dev
+    container_name: marketplace-api
+    restart: unless-stopped
+    ports:
+      - "8443:8443"
+    environment:
+      MARKETPLACE_API_PASSWORD: "${MARKETPLACE_API_PASSWORD}"
+    volumes:
+      # Config (read-only)
+      - ./config.yaml:/etc/agent-marketplace/config.yaml:ro
+      # dist/ contents (tarballs + sha256 + index.json) — read-only
+      - ../../dist:/var/lib/agent-marketplace/dist:ro
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O-", "http://localhost:8443/api/v1/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 5s
