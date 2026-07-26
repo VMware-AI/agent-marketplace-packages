@@ -13,26 +13,26 @@ import (
 
 // Manifest is the full content of manifest.json inside a tarball.
 type Manifest struct {
-	SchemaVersion string          `json:"schema_version"`
-	Agent         string          `json:"agent"`
-	Source        string          `json:"source"`
-	Version       string          `json:"version"`
-	Channel       string          `json:"channel"`
-	ReleasedAt    string          `json:"released_at,omitempty"`
+	SchemaVersion string `json:"schema_version"`
+	Agent         string `json:"agent"`
+	Source        string `json:"source"`
+	Version       string `json:"version"`
+	Channel       string `json:"channel"`
+	ReleasedAt    string `json:"released_at,omitempty"`
 
 	Upstream *UpstreamRef `json:"upstream,omitempty"`
 	ForkOf   *ForkOf      `json:"fork_of,omitempty"`
 
-	Requires             *Requires            `json:"requires"`
-	RuntimeConstraints   []RuntimeConstraint  `json:"runtime_constraints"`
-	Payload              []PayloadEntry       `json:"payload"`
+	Requires           *Requires           `json:"requires"`
+	RuntimeConstraints []RuntimeConstraint `json:"runtime_constraints"`
+	Payload            []PayloadEntry      `json:"payload"`
 
 	Checksums map[string]string `json:"checksums"`
 
 	Tarball *TarballRef `json:"tarball"`
 
 	Upgrade *UpgradeSpec `json:"upgrade"`
-	Scripts *Scripts    `json:"scripts"`
+	Scripts *Scripts     `json:"scripts"`
 }
 
 type UpstreamRef struct {
@@ -75,9 +75,9 @@ type TarballRef struct {
 }
 
 type UpgradeSpec struct {
-	Strategy        string             `json:"strategy"`
-	CompatibleFrom  []string           `json:"compatible_from"`
-	Migrations      []MigrationEntry   `json:"migrations"`
+	Strategy       string           `json:"strategy"`
+	CompatibleFrom []string         `json:"compatible_from"`
+	Migrations     []MigrationEntry `json:"migrations"`
 }
 
 type MigrationEntry struct {

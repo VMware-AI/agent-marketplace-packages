@@ -25,7 +25,7 @@ import (
 //   - On failure: returns the HTTP status + body for diagnosis.
 func NewLoginCmd(cfgPath, credsPath *string) *cobra.Command {
 	var (
-		server       string
+		server        string
 		passwordStdin bool
 		passwordFile  string
 	)

@@ -28,9 +28,9 @@ type Config struct {
 }
 
 type ServerConfig struct {
-	Listen   string `yaml:"listen"`   // e.g. "0.0.0.0:8080"
-	TLSCert  string `yaml:"tls_cert"` // optional
-	TLSKey   string `yaml:"tls_key"`  // optional
+	Listen  string `yaml:"listen"`   // e.g. "0.0.0.0:8080"
+	TLSCert string `yaml:"tls_cert"` // optional
+	TLSKey  string `yaml:"tls_key"`  // optional
 }
 
 type AuthConfig struct {

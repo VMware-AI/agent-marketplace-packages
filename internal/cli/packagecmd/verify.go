@@ -16,9 +16,9 @@ import (
 // NewVerifyCmd creates `agentpkg package verify`.
 //
 // Walks the agent directory and checks:
-//   1. meta.yaml (if present) — schema validation (display_name/icon/category/tags)
-//   2. Every agents/<name>/<source>/<version>/manifest.json — schema + checksums
-//      (recomputes SHA256 of payload/runtime files and compares to manifest.checksums)
+//  1. meta.yaml (if present) — schema validation (display_name/icon/category/tags)
+//  2. Every agents/<name>/<source>/<version>/manifest.json — schema + checksums
+//     (recomputes SHA256 of payload/runtime files and compares to manifest.checksums)
 func NewVerifyCmd() *cobra.Command {
 	c := &cobra.Command{
 		Use:   "verify <path>",

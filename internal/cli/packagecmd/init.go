@@ -90,13 +90,13 @@ func scaffoldAgent(name, root string) error {
 	}
 
 	files := map[string]string{
-		"meta.yaml":                              renderMeta(name),
-		"upstream/0.1.0/manifest.json":           renderManifest(name, "upstream", "0.1.0"),
-		"upstream/0.1.0/install.sh":              renderInstallSh(),
-		"upstream/0.1.0/uninstall.sh":            renderUninstallSh(),
-		"upstream/0.1.0/README.md":               renderReadme(name),
-		"upstream/0.1.0/payload/bin/.gitkeep":    "# entry point goes here\n",
-		"upstream/0.1.0/migrate/.gitkeep":        "# cross-version migration scripts\n",
+		"meta.yaml":                           renderMeta(name),
+		"upstream/0.1.0/manifest.json":        renderManifest(name, "upstream", "0.1.0"),
+		"upstream/0.1.0/install.sh":           renderInstallSh(),
+		"upstream/0.1.0/uninstall.sh":         renderUninstallSh(),
+		"upstream/0.1.0/README.md":            renderReadme(name),
+		"upstream/0.1.0/payload/bin/.gitkeep": "# entry point goes here\n",
+		"upstream/0.1.0/migrate/.gitkeep":     "# cross-version migration scripts\n",
 	}
 
 	for rel, body := range files {

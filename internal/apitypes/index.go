@@ -48,21 +48,21 @@ type Tarball struct {
 // package for the canonical Go type — this is a duplicate here because the
 // API JSON shape is a stable contract and should not depend on internal types.
 type Manifest struct {
-	SchemaVersion       string                 `json:"schema_version"`
-	Agent               string                 `json:"agent"`
-	Source              string                 `json:"source"`
-	Version             string                 `json:"version"`
-	Channel             string                 `json:"channel"`
-	ReleasedAt          string                 `json:"released_at,omitempty"`
-	Upstream            *Upstream             `json:"upstream,omitempty"`
-	ForkOf              *ForkOf                `json:"fork_of,omitempty"`
-	Requires            *Requires              `json:"requires"`
-	RuntimeConstraints []RuntimeConstraint    `json:"runtime_constraints"`
-	Payload             []PayloadEntry         `json:"payload"`
-	Checksums           map[string]string      `json:"checksums"`
-	Tarball             *TarballRef            `json:"tarball"`
-	Upgrade             *Upgrade               `json:"upgrade"`
-	Scripts             *Scripts               `json:"scripts"`
+	SchemaVersion      string              `json:"schema_version"`
+	Agent              string              `json:"agent"`
+	Source             string              `json:"source"`
+	Version            string              `json:"version"`
+	Channel            string              `json:"channel"`
+	ReleasedAt         string              `json:"released_at,omitempty"`
+	Upstream           *Upstream           `json:"upstream,omitempty"`
+	ForkOf             *ForkOf             `json:"fork_of,omitempty"`
+	Requires           *Requires           `json:"requires"`
+	RuntimeConstraints []RuntimeConstraint `json:"runtime_constraints"`
+	Payload            []PayloadEntry      `json:"payload"`
+	Checksums          map[string]string   `json:"checksums"`
+	Tarball            *TarballRef         `json:"tarball"`
+	Upgrade            *Upgrade            `json:"upgrade"`
+	Scripts            *Scripts            `json:"scripts"`
 }
 
 type Upstream struct {
@@ -124,18 +124,18 @@ type Scripts struct {
 // version's full manifest to keep the response small. Frontend fetches
 // individual manifests via /manifest when needed (e.g. detail view).
 type IndexStripped struct {
-	GeneratedAt string                 `json:"generated_at"`
-	Schema      string                 `json:"schema_version"`
-	Agents      []AgentStripped        `json:"agents"`
+	GeneratedAt string          `json:"generated_at"`
+	Schema      string          `json:"schema_version"`
+	Agents      []AgentStripped `json:"agents"`
 }
 
 type AgentStripped struct {
-	Name        string           `json:"name"`
-	DisplayName string           `json:"display_name"`
-	Description string           `json:"description"`
-	Icon        string           `json:"icon"`
-	Category    string           `json:"category"`
-	Tags        []string         `json:"tags"`
+	Name        string            `json:"name"`
+	DisplayName string            `json:"display_name"`
+	Description string            `json:"description"`
+	Icon        string            `json:"icon"`
+	Category    string            `json:"category"`
+	Tags        []string          `json:"tags"`
 	Versions    []VersionStripped `json:"versions"`
 }
 

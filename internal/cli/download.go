@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/VMware-AI/agent-marketplace-packages/internal/apitypes"
 	"github.com/spf13/cobra"
@@ -50,11 +51,18 @@ func NewDownloadCmd(cfgPath, credsPath *string) *cobra.Command {
 	}
 	c.Flags().StringVar(&source, "source", "upstream", "source tree (upstream | ours)")
 	c.Flags().StringVar(&channel, "channel", "stable", "channel (stable | beta | dev)")
-	c.Flags().StringVar(&out, "o", "", "output path (default: <name>-<source>-<version>.tar.gz)")
+	c.Flags().StringVarP(&out, "output", "o", "", "output path (default: <name>-<source>-<version>.tar.gz)")
 	return c
 }
 
 // resolveTarball looks up one version's tarball filename + expected sha256.
+//
+// Some agents (notably openclaw and hermes-agent) ship with a placeholder
+// "sha256:TBD" in the embedded manifest because the real package payload is
+// fetched from npm/PyPI at install time. When we see that placeholder we
+// fall back to the authoritative .sha256 sidecar served by the server at
+// /api/v1/agents/<n>/<s>/<v>/sha256 — that file hashes the actual bytes
+// on disk and is always current.
 func resolveTarball(c *Client, name, source, channel, version string) (string, string, error) {
 	path := fmt.Sprintf("/api/v1/agents/%s/%s/%s/manifest", name, source, version)
 	var m apitypes.Manifest
@@ -64,7 +72,58 @@ func resolveTarball(c *Client, name, source, channel, version string) (string, s
 	if m.Tarball == nil {
 		return "", "", fmt.Errorf("manifest has no tarball reference")
 	}
-	return m.Tarball.Filename, m.Tarball.SHA256, nil
+	sha := m.Tarball.SHA256
+	if isTarballSHAPlaceholder(sha) {
+		sidecar, err := fetchSidecarSHA(c, name, source, version)
+		if err != nil {
+			return "", "", fmt.Errorf("manifest.tarball.sha256 is %q and sidecar fetch failed: %w", sha, err)
+		}
+		sha = "sha256:" + sidecar
+	}
+	return m.Tarball.Filename, sha, nil
+}
+
+// isTarballSHAPlaceholder reports whether the embedded manifest's tarball
+// SHA is a known placeholder (empty, "sha256:TBD", or anything that ends
+// in ":TBD"). In those cases the actual bytes are still authoritative —
+// the server exposes their hash via the /sha256 sidecar endpoint.
+func isTarballSHAPlaceholder(s string) bool {
+	if s == "" {
+		return true
+	}
+	const tbd = "sha256:TBD"
+	if s == tbd {
+		return true
+	}
+	return strings.HasSuffix(s, ":TBD")
+}
+
+// fetchSidecarSHA downloads the .sha256 sidecar text and returns the hex
+// prefix. Format matches `sha256sum`: "<hex>  <filename>\n".
+func fetchSidecarSHA(c *Client, name, source, version string) (string, error) {
+	path := fmt.Sprintf("/api/v1/agents/%s/%s/%s/sha256", name, source, version)
+	req, err := http.NewRequest(http.MethodGet, c.BaseURL+path, nil)
+	if err != nil {
+		return "", err
+	}
+	req.SetBasicAuth("agentpkg", c.Password)
+	resp, err := c.HTTP.Do(req)
+	if err != nil {
+		return "", fmt.Errorf("download sidecar: %w", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return "", fmt.Errorf("HTTP %d fetching sidecar", resp.StatusCode)
+	}
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return "", err
+	}
+	fields := strings.Fields(string(body))
+	if len(fields) == 0 {
+		return "", fmt.Errorf("empty sidecar response")
+	}
+	return fields[0], nil
 }
 
 // downloadAndVerify streams the tarball, computes its sha256 in-flight, and

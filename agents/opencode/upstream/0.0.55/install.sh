@@ -148,7 +148,9 @@ fi
 ok "verified: $VERSION_OUTPUT"
 
 # --- 10. write state ----------------------------------------------------------
-PREV_STATE_JSON=""
+# PREV_STATE_JSON must be valid JSON for --argjson. Default to "{}" so a
+# fresh install (no prior state.json) doesn't pass an empty string.
+PREV_STATE_JSON="{}"
 if [[ -f "$STATE_FILE" ]]; then
   PREV_STATE_JSON=$(jq -c 'del(.installed_at)' "$STATE_FILE" 2>/dev/null || echo "{}")
 fi

@@ -1,7 +1,7 @@
 // Command agentpkg is the dual-purpose CLI for the agent marketplace:
 //
-//   * VM-side: install / uninstall / upgrade an agent
-//   * Package developer: scaffold / verify / build / sign / reindex a bundle
+//   - VM-side: install / uninstall / upgrade an agent
+//   - Package developer: scaffold / verify / build / sign / reindex a bundle
 //
 // It embeds the same apitypes and repo packages used by marketplace-api.
 package main
@@ -54,9 +54,9 @@ Subcommand groups:
                      install, upgrade, uninstall
   Package authoring: package init, package verify, package build,
                      package reindex, package sign`,
-		SilenceUsage:      true,
-		SilenceErrors:     true,
-		Version:           "0.1.0",
+		SilenceUsage:  true,
+		SilenceErrors: true,
+		Version:       "0.1.0",
 	}
 
 	c.PersistentFlags().StringVar(&cfgPath, "config", defaultConfigPath(),

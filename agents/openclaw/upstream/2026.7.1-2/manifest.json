@@ -1,0 +1,84 @@
+{
+  "agent": "openclaw",
+  "channel": "stable",
+  "checksums": {
+    "install.sh": "sha256:ef8f9fb7a4c26528be8f7f796c3514178c000277e53537fea851bfe3e9876752",
+    "uninstall.sh": "sha256:f2b74f5b58a3c992f11b94b742c8a4908a2746cd82fbe43782cf22d91dd929a7"
+  },
+  "fork_of": null,
+  "payload": [
+    {
+      "dst": "{{TARGET_ROOT}}/openclaw/2026.7.1-2/",
+      "mode": "0755",
+      "src": "payload/openclaw/"
+    }
+  ],
+  "released_at": "2026-07-13",
+  "requires": {
+    "arch": [
+      "x86_64"
+    ],
+    "os": [
+      "linux"
+    ],
+    "system_packages": [
+      "ca-certificates"
+    ],
+    "system_tools": [
+      "tar",
+      "gzip",
+      "sha256sum",
+      "bash",
+      "coreutils",
+      "grep",
+      "sed",
+      "awk",
+      "findutils",
+      "curl"
+    ]
+  },
+  "runtime_requirements": [
+    {
+      "install_hint": "https://nodejs.org/dist/v22.22.3/node-v22.22.3-linux-x64.tar.xz (or use nvm: 'nvm install 24 && nvm use 24')",
+      "name": "node",
+      "verify_cmd": "node --version",
+      "version": ">=22.22.3 <23, >=24.15.0 <25, or >=25.9.0"
+    }
+  ],
+  "schema_version": "1.0",
+  "scripts": {
+    "install": "install.sh",
+    "uninstall": "uninstall.sh"
+  },
+  "source": "upstream",
+  "tarball": {
+    "filename": "openclaw-upstream-2026.7.1-2.tar.gz",
+    "sha256": "sha256:TBD"
+  },
+  "upgrade": {
+    "compatible_from": [
+      "2026.7.1",
+      "2026.6.11",
+      "2026.6.0"
+    ],
+    "migrations": [
+      {
+        "from": "2026.7.x",
+        "script": "migrate/from-2026.7.x.sh"
+      },
+      {
+        "from": "2026.6.x",
+        "script": "migrate/from-2026.6.x.sh"
+      }
+    ],
+    "strategy": "replace"
+  },
+  "upstream": {
+    "name": "openclaw",
+    "notes": "npm package + 274 transitive deps pre-resolved at build time via 'npm install --global --prefix payload/openclaw openclaw@VERSION'. install.sh copies this tree to {{TARGET_ROOT}}.",
+    "sha256": "sha256:TBD",
+    "url": "https://registry.npmjs.org/openclaw/-/openclaw-2026.7.1-2.tgz",
+    "version": "2026.7.1-2"
+  },
+  "version": "2026.7.1-2"
+}

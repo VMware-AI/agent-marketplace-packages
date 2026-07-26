@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
 )
 
 // jsonUnmarshal wraps encoding/json so callers don't all import it.
@@ -34,6 +35,13 @@ func hexEncode(b []byte) string { return hex.EncodeToString(b) }
 // Uses the stdlib archive/tar (no extra deps). Streams the archive; we
 // only write the bytes for the requested file.
 func runTarExtract(tarballPath, fileName, destDir string) error {
+	return runTarExtractTo(tarballPath, fileName, destDir+"/"+fileName)
+}
+
+// runTarExtractTo is like runTarExtract but lets the caller specify the
+// final output path explicitly (so the script's archived location can
+// differ from where execScript expects to find it).
+func runTarExtractTo(tarballPath, fileName, outPath string) error {
 	f, err := os.Open(tarballPath)
 	if err != nil {
 		return err
@@ -57,19 +65,18 @@ func runTarExtract(tarballPath, fileName, destDir string) error {
 			continue
 		}
 		if hdr.Name == fileName {
-			out, err := os.Create(destDir + "/" + fileName)
+			if err := os.MkdirAll(filepath.Dir(outPath), 0755); err != nil {
+				return fmt.Errorf("mkdir for %s: %w", outPath, err)
+			}
+			out, err := os.OpenFile(outPath, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, 0755)
 			if err != nil {
 				return err
 			}
-			defer out.Close()
 			if _, err := io.Copy(out, tr); err != nil {
+				out.Close()
 				return err
 			}
-			out.Close()
-			if err := os.Chmod(out.Name(), 0755); err != nil {
-				return fmt.Errorf("chmod: %w", err)
-			}
-			return nil
+			return out.Close()
 		}
 	}
 	return fmt.Errorf("file %s not found in tarball", fileName)

@@ -202,18 +202,39 @@ func runUninstall(name string, s *installShared) error {
 		return fmt.Errorf("cached tarball not found at %s — cannot run uninstall.sh without it", tarballPath)
 	}
 
-	// Extract uninstall.sh and run it.
+	// Extract uninstall.sh and run it. The tarball may nest the script
+	// under the version directory (per `tools/pack.sh`); try that prefix
+	// first, then fall back to the bare filename.
 	tmp, err := os.MkdirTemp("", "agentpkg-uninstall-")
 	if err != nil {
 		return err
 	}
 	defer os.RemoveAll(tmp)
-	if err := extractSingleFile(tarballPath, "uninstall.sh", tmp); err != nil {
+	if err := extractTarballScript(tarballPath, state.Version, tmp); err != nil {
 		return fmt.Errorf("extract uninstall.sh: %w", err)
 	}
 	return execScript(filepath.Join(tmp, "uninstall.sh"),
 		[]string{"AGENT_MARKETPLACE_TARGET_ROOT=" + targetRoot},
 	)
+}
+
+// extractTarballScript pulls uninstall.sh out of a cached tarball. It
+// tries "<version>/uninstall.sh" first (the canonical layout produced
+// by tools/pack.sh) and falls back to "uninstall.sh" at the root for
+// tarballs that don't nest under the version segment. The extracted
+// script is always written to destDir/uninstall.sh regardless of its
+// archived path.
+func extractTarballScript(tarballPath, version, destDir string) error {
+	candidates := []string{
+		filepath.Join(version, "uninstall.sh"),
+		"uninstall.sh",
+	}
+	for _, name := range candidates {
+		if err := runTarExtractTo(tarballPath, name, filepath.Join(destDir, "uninstall.sh")); err == nil {
+			return nil
+		}
+	}
+	return fmt.Errorf("uninstall.sh not found (tried: %v)", candidates)
 }
 
 // runInstallScript extracts the tarball into a temp dir and runs install.sh.

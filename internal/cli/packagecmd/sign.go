@@ -15,9 +15,9 @@ import (
 // alongside the tarball that consumers can verify.
 func NewSignCmd() *cobra.Command {
 	var (
-		keyID   string
-		gpgBin  string
-		dryRun  bool
+		keyID  string
+		gpgBin string
+		dryRun bool
 	)
 	c := &cobra.Command{
 		Use:   "sign <tarball>",

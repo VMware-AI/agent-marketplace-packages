@@ -4,9 +4,10 @@ Offline-installable agent bundles for `opencode`, `openclaw`, and `hermes-agent`
 
 Each (agent, version) ships as a **self-contained tarball** with:
 - A pre-fetched upstream release artifact (npm tarball, pip wheels, or static binary)
-- Bundled runtime (Node.js, Python, or nothing — depends on the agent)
 - An idempotent `install.sh` that drops everything into `$HOME/.local` (no root required)
 - A SHA256 chain that detects tampering of any byte inside the tarball
+
+Runtimes (Node.js, Python, uv) are **NOT bundled** in the tarball — the target machine is expected to have them pre-installed at the version declared in `manifest.runtime_requirements`. Use `tools/install-runtime.sh` on Ubuntu 24.04 to provision them.
 
 This repository **is** the source of truth. To publish, run `tools/pack.sh`; consumers fetch the resulting `dist/<name>-<source>-<version>.tar.gz` over HTTPS and verify its `.sha256`.
 
@@ -15,20 +16,29 @@ This repository **is** the source of truth. To publish, run `tools/pack.sh`; con
 ## Quick start (consumer side)
 
 ```bash
-# 1. Make sure the system prerequisites are present (see docs/prerequisites.md)
-sudo apt-get install -y tar coreutils bash ca-certificates
+# 1. (One-time per target machine) provision the runtimes an agent needs.
+#    Run as root on Ubuntu 24.04. The agent's install.sh will fail fast
+#    with a clear hint if the runtime version is missing or wrong.
+sudo tools/install-runtime.sh install --from-manifest agents/<agent>/upstream/<v>/manifest.json
+#    Or pin explicitly:
+sudo tools/install-runtime.sh install node   22.22.3
+sudo tools/install-runtime.sh install python 3.12.13
+sudo tools/install-runtime.sh install uv     0.11.31
 
-# 2. Download a tarball + its checksum
+# 2. Make sure the system prerequisites are present (see docs/prerequisites.md)
+sudo apt-get install -y tar coreutils bash ca-certificates jq
+
+# 3. Download a tarball + its checksum
 curl -fSLO https://your-cdn.example/agents/opencode-upstream-0.0.55.tar.gz
 curl -fSLO https://your-cdn.example/agents/opencode-upstream-0.0.55.tar.gz.sha256
 sha256sum -c opencode-upstream-0.0.55.tar.gz.sha256
 
-# 3. Extract and install (no root, no network)
+# 4. Extract and install (no root, no network)
 tar -xzf opencode-upstream-0.0.55.tar.gz
 cd opencode-upstream-0.0.55
 ./install.sh            # installs to $HOME/.local by default
 
-# 4. Verify it actually runs
+# 5. Verify it actually runs
 $HOME/.local/bin/opencode --version
 ```
 
@@ -44,11 +54,16 @@ agents/
     upstream/<version>/          Versions that mirror upstream releases 1:1
     ours/<version>/              Our forks / patches / internal builds
       manifest.json              Single source of truth (see docs/manifest-schema.md)
-      install.sh                 Self-contained install (validates tarball → deploys → verifies --version)
+                                  Includes `runtime_requirements[]` declaring which
+                                  system-installed runtimes (Node/Python/uv) install.sh needs.
+      install.sh                 Self-contained install (validates tarball → verifies runtime
+                                  → deploys vendored payload → verifies --version)
       uninstall.sh               Removes files recorded in state.json
       migrate/                   Version-to-version migration scripts
-      runtime/                   Bundled runtime (Node, Python, uv, …) — per-version, copied into the tarball
-      payload/                   Bundled upstream artifact (npm tgz, pip wheels, static binary)
+      payload/                   Vendored offline-install deps:
+                                    - npm tree (openclaw): pre-resolved by `npm install --global`
+                                    - Python wheels (hermes-agent): downloaded by `pip download`
+                                    - static binary (opencode)
       files/                     Auxiliary config we ship on top
       README.md                  Notes specific to this version
 
@@ -56,12 +71,10 @@ tools/                            Maintenance tooling (NEVER enters a tarball)
   fetch.sh                        Pull upstream artifacts into agents/<…>/payload/
   pack.sh                         Build a tarball from a version directory
   verify.sh                       Validate manifest + checksums + tarball consistency
+  install-runtime.sh               Provision Node/Python/uv on the target (Ubuntu 24.04)
   sign.sh                         Optional GPG detached signature
   publish.sh                      Upload tarball + sha256 + sig to a remote
   index-gen.sh                    Rebuild dist/index.json from existing tarballs
-
-runtime-pool/                     Local cache of pre-downloaded runtimes (Node, Python, uv)
-                                  Reused across versions to keep the repo small
 
 docs/
   prerequisites.md                System packages required on the target machine
@@ -75,17 +88,19 @@ docs/
 
 ## Concepts in one paragraph
 
-Every version directory is the **exact** root of its tarball. The tarball contains everything install.sh needs (upstream artifact, runtime, install script, manifest) so the script can run on a completely offline machine with zero pre-installed tooling. The install script is **idempotent** — running it twice with the same tarball is a no-op. State is persisted in `$HOME/.local/state/<agent>.state.json` so future upgrades know what's installed. The manifest records SHA256 of every file in the tarball; `tools/verify.sh` re-checks them on demand.
+Every version directory is the **exact** root of its tarball. The tarball contains the install script, the embedded `manifest.json`, the upstream artifact (npm tree, Python wheels, or static binary), and the install.sh's helper files. Runtimes (Node, Python, uv) are **NOT** in the tarball — they live on the target machine, installed via `tools/install-runtime.sh` from the version declarations in `manifest.runtime_requirements`. The install script is **idempotent** — running it twice with the same tarball is a no-op. State is persisted in `$HOME/.local/state/<agent>.state.json` so future upgrades know what's installed. The manifest records the SHA256 of the tarball sidecar (`<name>.tar.gz.sha256`) plus per-file checksums; `tools/verify.sh` re-checks them on demand.
 
 ---
 
 ## Currently packaged
 
-| Agent        | Source   | Version    | Runtime           | Tarball size (est.) |
-|--------------|----------|------------|-------------------|---------------------|
-| opencode     | upstream | 0.0.55     | (none — Go static) | ~14 MB              |
-| openclaw     | upstream | 2026.7.2   | Node 22.22.3      | ~60 MB              |
-| hermes-agent | upstream | 0.18.2     | Python 3.12 + uv  | ~180 MB             |
+| Agent        | Source   | Version    | Runtime required (target-supplied) | Tarball size (est.) |
+|--------------|----------|------------|-------------------------------------|---------------------|
+| opencode     | upstream | 0.0.55     | (none — Go static)                  | ~14 MB              |
+| openclaw     | upstream | 2026.7.1-2 | Node.js ≥22.22.3 / ≥24.15.0 / ≥25.9 | ~62 MB              |
+| hermes-agent | upstream | 0.18.2     | Python 3.12 + uv ≥0.11              | ~47 MB              |
+
+Runtimes are NOT bundled — install them on the target machine with `tools/install-runtime.sh install --from-manifest agents/<name>/upstream/<v>/manifest.json` (Ubuntu 24.04 only).
 
 See `agents/<name>/upstream/<version>/README.md` for version-specific notes.
 

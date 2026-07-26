@@ -31,7 +31,7 @@ Use the right helper for the agent:
 tools/fetch.sh opencode upstream 0.0.55
 
 # openclaw — npm tarball
-tools/fetch.sh openclaw upstream 2026.7.2
+tools/fetch.sh openclaw upstream 2026.7.1-2
 
 # hermes-agent — pip wheels (all transitive deps, prefers prebuilt wheels)
 tools/fetch.sh hermes-agent upstream 0.18.2
@@ -44,26 +44,30 @@ Each helper:
 
 Re-run is safe — it compares local SHA256 to upstream SHA256 and refuses to overwrite a diverged payload.
 
-## Step 3 — fetch the bundled runtime (if any)
+## Step 3 — pre-resolve install deps for offline installs
 
-Static-binary agents (opencode) need nothing. Agents that need Node or Python ship those inside the tarball.
-
-```bash
-# Pull Node into the local cache (reused across versions)
-tools/runtime-fetch.sh node 22.22.3 linux-x64
-
-# Copy from cache into this version's directory
-cp -r runtime-pool/node-v22.22.3-linux-x64 runtime/node
-```
-
-For hermes-agent you also need Python and uv:
+The agent tarball must install with **no network on the target**. After fetch.sh populates `payload/`, pre-resolve the full dependency tree:
 
 ```bash
-tools/runtime-fetch.sh python 3.12.7 linux-x64
-tools/runtime-fetch.sh uv 0.5.11 linux-x64
+# openclaw: resolve npm tree into payload/openclaw/ (full --global prefix layout)
+NPM_REGISTRY=https://registry.npmmirror.com/ \
+  npm install --prefix agents/openclaw/upstream/<v>/payload/openclaw \
+    --global --no-audit --no-fund \
+    openclaw@<v>
+
+# hermes-agent: download all transitive wheels (linux manylinux) into payload/wheels/
+python3 -m pip download \
+  --dest agents/hermes-agent/upstream/<v>/payload/wheels \
+  --index-url https://mirrors.aliyun.com/pypi/simple/ \
+  --python-version 3.12 \
+  --platform manylinux2014_x86_64 \
+  --only-binary=:all: \
+  "hermes-agent==<v>"
 ```
 
-After copying, recompute the per-file SHA256 (the verify step does this automatically).
+`tools/pack.sh` then packs whatever's under `payload/`. At install time the vendored tree is consumed offline (`cp -a payload/openclaw/. $DEPLOY_ROOT/` for npm, `uv pip install --no-index --find-links payload/wheels/` for Python).
+
+Runtimes (Node, Python, uv) are **not** in the tarball — they're installed on the target machine separately via `tools/install-runtime.sh` (Ubuntu 24.04 only).
 
 ## Step 4 — write `manifest.json`
 
@@ -71,12 +75,36 @@ Use the schema in [`docs/manifest-schema.md`](docs/manifest-schema.md). At minim
 
 - `agent`, `source`, `version`, `channel`
 - `upstream.sha256` (filled by the fetch step)
-- `runtime[]` — list of bundled runtimes (empty for opencode)
+- `runtime_requirements[]` — list of system-installed runtimes the agent needs
+  (e.g. `{"name":"node","version":">=22.22.3 <23, >=24.15.0 <25, or >=25.9.0"}`)
 - `payload[]` — files to deploy into `$HOME/.local/<agent>/…`
 - `requires.system_packages`, `requires.system_tools`
 - `upgrade.compatible_from`, `upgrade.migrations` (see [`docs/upgrade-protocol.md`](docs/upgrade-protocol.md))
 
-You don't have to fill `checksums` by hand — `tools/verify.sh --fix` writes them for you.
+You don't have to fill `checksums` by hand — `tools/pack.sh` writes them for you.
+
+## Step 4b — pre-resolve install deps for offline installs
+
+The agent tarball must install with no network on the target. After fetch.sh populates `payload/`, pre-resolve the full dependency tree:
+
+```bash
+# openclaw: resolve npm tree into payload/openclaw/ (full prefix layout)
+NPM_REGISTRY=https://registry.npmmirror.com/ \
+  npm install --prefix agents/openclaw/upstream/<v>/payload/openclaw \
+    --global --no-audit --no-fund \
+    openclaw@<v>
+
+# hermes-agent: download all transitive wheels (linux manylinux) into payload/wheels/
+python3 -m pip download \
+  --dest agents/hermes-agent/upstream/<v>/payload/wheels \
+  --index-url https://mirrors.aliyun.com/pypi/simple/ \
+  --python-version 3.12 \
+  --platform manylinux2014_x86_64 \
+  --only-binary=:all: \
+  "hermes-agent==<v>"
+```
+
+`tools/pack.sh` will pack whatever's under `payload/`. install.sh uses the vendored tree offline (`cp -a payload/openclaw/. $DEPLOY_ROOT/` for npm, `uv pip install --no-index --find-links payload/wheels/` for Python).
 
 ## Step 5 — write `install.sh`
 
@@ -85,11 +113,14 @@ All install scripts follow the contract in [`docs/install-protocol.md`](docs/ins
 1. Re-verify this tarball's SHA256 against `manifest.tarball.sha256`. Fail loudly if it doesn't match.
 2. Re-verify each file's SHA256 against `manifest.checksums`. Refuse to install on mismatch.
 3. Check `requires.system_tools` are on `PATH`; refuse with exit 40 if not.
-4. Read `$HOME/.local/state/<agent>.state.json` (if it exists) and decide: fresh install vs upgrade.
-5. Deploy runtime + payload into `$HOME/.local/<agent>/…` (using only user-writable paths).
-6. Write the new `state.json`.
-7. Run `<agent> --version` to verify. Print `INSTALLED_VERSION=<output>` on success.
-8. Exit 0 on success.
+4. **Verify runtime requirements** from `manifest.runtime_requirements` against the target machine. Fail with exit 50 (and print the `install_hint`) if the runtime is missing or the wrong version.
+5. Read `$HOME/.local/state/<agent>.state.json` (if it exists) and decide: fresh install vs upgrade.
+6. Deploy runtime + payload into `$HOME/.local/<agent>/…` (using only user-writable paths).
+7. Write the new `state.json`.
+8. Run `<agent> --version` to verify. Print `INSTALLED_VERSION=<output>` on success.
+9. Exit 0 on success.
+
+Runtimes (Node, Python, uv) are **NOT** bundled in the tarball — they're expected on the target machine. See Step 3 of the consumer Quick start for how to install them via `tools/install-runtime.sh`.
 
 See the existing version directories (`agents/opencode/upstream/0.0.55/install.sh`, etc.) for the canonical templates.
 
@@ -160,7 +191,7 @@ For a brand-new agent, the work is:
 2. Add a `_templates/<new-agent>-manifest.json.tmpl` for future versions
 3. Document any agent-specific quirks in `agents/<new-agent>/README.md`
 4. Update `README.md`'s "Currently packaged" table
-5. If the agent needs a runtime that's not yet cached, run `tools/runtime-fetch.sh` to populate `runtime-pool/`
+5. Declare the runtime requirements in the agent's `manifest.json` (under `runtime_requirements[]`); consumers run `tools/install-runtime.sh install --from-manifest <path>` on their Ubuntu 24.04 target to provision them.
 
 ---
 

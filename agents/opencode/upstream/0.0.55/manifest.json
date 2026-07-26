@@ -2,8 +2,8 @@
   "agent": "opencode",
   "channel": "stable",
   "checksums": {
-    "install.sh": "sha256:dea93fcacd70a68b997fde01ab52834400875ff79836e0ec10bbc8d9481f31c2",
-    "payload/bin/opencode": "sha256:a509557e87bcae9ab1c802abd921e0b1ba4d25cd09399fd27d3dae288abe2aa9",
+    "install.sh": "sha256:c712b83e5be0a649038310c79ebf279f42ce85448bae2e71d9015b0276de0cee",
+    "payload/bin/opencode": "sha256:f7fe18703f9d0cc2352d0a94c8c62bfd378b6681e017a2bbf78c2ecadad75544",
     "uninstall.sh": "sha256:b71a125cc5b22cdb6aeb8e70cd6c8cf6198c08fc2d1caf072f64d586ce278930"
   },
   "fork_of": null,
@@ -44,7 +44,7 @@
   "source": "upstream",
   "tarball": {
     "filename": "opencode-upstream-0.0.55.tar.gz",
-    "sha256": "sha256:6ab77142cf9e8460e01f25f57c847408c87e314ba32c3472fb67a89a5bd5125c",
+    "sha256": "sha256:TBD",
     "signature_type": "none"
   },
   "upgrade": {
