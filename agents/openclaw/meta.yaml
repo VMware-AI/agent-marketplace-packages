@@ -1,0 +1,8 @@
+display_name: "OpenClaw"
+description: "多渠道 AI 网关，跨 WhatsApp / Telegram / Slack / Discord 等平台统一接入"
+icon: "message-square"
+category: "chat"
+tags:
+  - ai
+  - gateway
+  - multi-channel

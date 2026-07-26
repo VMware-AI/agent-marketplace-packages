@@ -41,31 +41,142 @@ log "  files: $(find "$BUNDLE_DIR" -type f | wc -l | tr -d ' ')"
 BUNDLE_PARENT="$(dirname "$BUNDLE_DIR")"
 BUNDLE_BASE="$(basename "$BUNDLE_DIR")"
 
-tar -czf "$TARBALL_PATH" \
-  --owner=0 --group=0 --numeric-owner \
-  -C "$BUNDLE_PARENT" \
-  "$BUNDLE_BASE" \
-  || err "tar failed"
+# Self-referential sha is fundamentally unstable: the embedded manifest
+# is part of the bytes being hashed, so any "real" value we stamp in
+# makes the hash stale. We sidestep this by keeping
+# manifest.tarball.sha256 = "sha256:TBD" as the SOURCE-OF-TRUTH-FOR-EMBEDDED-MANIFEST
+# marker, and storing the authoritative hash only in two places:
+#   1. $TARBALL_PATH.sha256 (sidecar next to the tarball)
+#   2. dist/index.json (consumed by marketplace-api via package reindex)
+#
+# If a user accidentally committed a real (but stale) hash in tarball.sha256,
+# fix it here. We match the literal field shape to avoid false positives
+# from "upstream.sha256" (which is genuinely TBD for npm-style agents).
+python3 - "$BUNDLE_DIR/manifest.json" "$TARBALL_NAME" <<'PY'
+import json, os, sys, hashlib
+manifest_path = sys.argv[1]
+tarball_name = sys.argv[2]
+bundle_dir = os.path.dirname(manifest_path)
+with open(manifest_path) as f:
+    d = json.load(f)
 
-# Compute SHA256 in the standard `sha256sum` output format
-TARBALL_ABS="$(cd "$(dirname "$TARBALL_PATH")" && pwd)/$(basename "$TARBALL_PATH")"
-SHA_ABS="$(cd "$(dirname "$SHA_PATH")" && pwd)/$(basename "$SHA_PATH")"
-sha256sum "$TARBALL_ABS" > "$SHA_ABS"
-TAR_SHA="$(awk '{print $1}' "$SHA_ABS")"
+# 1) tarball.sha256 must be TBD in the embedded manifest.
+d.setdefault("tarball", {})
+d["tarball"]["sha256"] = "sha256:TBD"
+d["tarball"]["filename"] = tarball_name
+
+# 2) Recompute checksums for every file that ends up in the tarball.
+# install.sh iterates manifest.checksums, so any stale entry there causes
+# an install-time "checksum mismatch" failure even when the bytes are fine.
+# We compute fresh sha256 for every file referenced in payload[], runtime[],
+# plus install.sh / uninstall.sh. If a key in the existing checksums no
+# longer matches any source, drop it.
+def sha256_file(rel):
+    p = os.path.join(bundle_dir, rel)
+    h = hashlib.sha256()
+    with open(p, "rb") as f:
+        for chunk in iter(lambda: f.read(1 << 16), b""):
+            h.update(chunk)
+    return "sha256:" + h.hexdigest()
+
+referenced = set()
+for src in d.get("payload", []) or []:
+    if src.get("src"):
+        referenced.add(src["src"])
+for src in d.get("runtime", []) or []:
+    s = src.get("src")
+    if s:
+        referenced.add(s)
+for script in ("install.sh", "uninstall.sh"):
+    if os.path.exists(os.path.join(bundle_dir, script)):
+        referenced.add(script)
+
+# Only regular files go into checksums — install.sh iterates this map and
+# sha256sums each entry, so directories would error out. Openclaw/hermes
+# ship whole directories (npm tree, python runtime) and intentionally omit
+# them from checksums; the per-file verification there is the install.sh's
+# job via `cp -a`.
+new_checksums = {}
+for rel in sorted(referenced):
+    full = os.path.join(bundle_dir, rel)
+    if not os.path.isfile(full):
+        continue
+    new_checksums[rel] = sha256_file(rel)
+d["checksums"] = new_checksums
+
+with open(manifest_path, "w") as f:
+    json.dump(d, f, indent=2, sort_keys=True)
+    f.write("\n")
+print("[pack] OK: rewrote checksums for %d files" % len(new_checksums))
+PY
+
+# Stage tarball into a temp file so we can hash it before publishing.
+TMP_TARBALL="$(mktemp -t pack.XXXXXX.tar.gz)"
+trap 'rm -f "$TMP_TARBALL"' EXIT
+
+# Build the tarball. The first time after a `cp -r` from a non-Linux host,
+# macOS-extended tar will pick up AppleDouble (._*) fork files and xattr
+# headers — those confuse the Linux extractor downstream (Python's venv
+# aborts on the `._activate` files, etc.). COPYFILE_DISABLE=1 + --no-xattrs
+# + --no-mac-metadata strip them so the consumer only sees the canonical
+# payload. Same set of flags works under GNU tar on Linux (no-ops there).
+TMP_TARBALL="$(mktemp -t pack.XXXXXX.tar.gz)"
+trap 'rm -f "$TMP_TARBALL"' EXIT
+
+if COPYFILE_DISABLE=1 tar -czf "$TMP_TARBALL" \
+     --owner=0 --group=0 --numeric-owner \
+     --no-xattrs --no-mac-metadata \
+     -C "$BUNDLE_PARENT" \
+     "$BUNDLE_BASE"; then
+  :
+else
+  err "tar failed"
+fi
+
+TAR_SHA="$(sha256sum "$TMP_TARBALL" | awk '{print $1}')"
 ok "tarball SHA256: $TAR_SHA"
 
-# Update manifest.json's tarball.sha256 if it's still TBD
-if grep -q '"sha256": "sha256:TBD"' "$BUNDLE_DIR/manifest.json"; then
-  python3 -c "
-import json
-with open('$BUNDLE_DIR/manifest.json') as f: d = json.load(f)
-d.setdefault('tarball', {})
-d['tarball']['sha256'] = 'sha256:$TAR_SHA'
-d['tarball']['filename'] = '$TARBALL_NAME'
-with open('$BUNDLE_DIR/manifest.json', 'w') as f:
-    json.dump(d, f, indent=2, sort_keys=True); f.write('\n')
-"
-  log "  updated manifest.tarball.sha256 (was TBD)"
+# Move staged tarball into place + write sidecar sha256 file. The sidecar
+# IS the authoritative hash for these bytes — install.sh and the CLI
+# both trust it (the latter via the /sha256 sidecar endpoint).
+mv "$TMP_TARBALL" "$TARBALL_PATH"
+trap - EXIT  # disarm the cleanup; we already moved the file
+sha256sum "$TARBALL_PATH" > "$SHA_PATH"
+
+# Also patch dist/index.json in-place if it exists, so the marketplace-api
+# serves the correct size + sha without a separate `package reindex` step.
+INDEX_PATH="$OUT_DIR/index.json"
+if [[ -f "$INDEX_PATH" ]]; then
+  INDEX_PATH_REAL="$INDEX_PATH" \
+    TAR_NAME="$TARBALL_NAME" TAR_PATH="$TARBALL_PATH" TAR_SHA_VAL="$TAR_SHA" \
+    AGENT_VAL="$AGENT" SRC_VAL="$SOURCE" VER_VAL="$VERSION" \
+    python3 - <<'PY'
+import json, os
+p = os.environ["INDEX_PATH_REAL"]
+idx = json.load(open(p))
+tbs = os.path.getsize(os.environ["TAR_PATH"])
+sha = os.environ["TAR_SHA_VAL"]
+agent_name = os.environ["AGENT_VAL"]
+source = os.environ["SRC_VAL"]
+version = os.environ["VER_VAL"]
+patched = False
+for a in idx.get("agents", []):
+    if a.get("name") != agent_name:
+        continue
+    for v in a.get("versions", []):
+        if v.get("source") == source and v.get("version") == version:
+            v["tarball"]["filename"] = os.environ["TAR_NAME"]
+            v["tarball"]["size_bytes"] = tbs
+            v["tarball"]["sha256"] = "sha256:" + sha
+            if "manifest" in v and isinstance(v["manifest"], dict) and "tarball" in v["manifest"]:
+                v["manifest"]["tarball"]["sha256"] = "sha256:TBD"
+            patched = True
+if patched:
+    json.dump(idx, open(p, "w"), indent=2, ensure_ascii=False)
+    print("[pack] OK: patched index.json entry for %s/%s/%s" % (agent_name, source, version))
+else:
+    print("[pack] WARN: no matching entry in %s — run the package reindex subcommand" % p)
+PY
 fi
 
 ok "wrote $TARBALL_PATH ($(du -h "$TARBALL_PATH" | awk '{print $1}'))"

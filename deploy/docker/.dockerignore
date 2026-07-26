@@ -1,0 +1,34 @@
+# Files / directories excluded from the Docker build context.
+# Speeds up `docker build` and keeps image layer size smaller.
+
+.git
+.gitignore
+.gitattributes
+.DS_Store
+
+# Local build outputs
+bin/
+*.test
+*.out
+
+# Documentation / planning that doesn't ship in the runtime image
+docs/
+*.md
+!docs/icon-catalog.md
+!docs/category-catalog.md
+!docs/meta-yaml-schema.md
+
+# Test files
+*_test.go
+testdata/
+
+# Runtime / fetch scripts (development-only)
+tools/fetch.sh
+tools/runtime-fetch.sh
+tools/build-index.sh
+tools/api-publish.sh
+
+# Local config / secrets
+.env
+config/marketplace-api.yaml
+config/*.local.*

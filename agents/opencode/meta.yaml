@@ -1,0 +1,8 @@
+display_name: "OpenCode"
+description: "AI 编码智能体，专注于终端内代码理解、生成与调试"
+icon: "code"
+category: "developer"
+tags:
+  - ai
+  - terminal
+  - code

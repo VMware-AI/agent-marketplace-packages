@@ -3,32 +3,25 @@
 #
 # Contract: see docs/install-protocol.md
 #
+# Design:
+#   - Runtime (Python, uv) is NOT bundled. Target machine must have Python
+#     3.12.x and uv pre-installed. See manifest.runtime_requirements.
+#   - hermes-agent wheel + 60 transitive wheels ARE bundled in
+#     payload/wheels/ (built at pack time via 'pip download --platform
+#     manylinux2014_x86_64 --python-version 3.12'). install.sh uses
+#     'uv pip install --no-index --find-links' — fully offline.
+#
 # Steps:
-#   1. Refuse root (user-level only)
-#   2. Check system tools (curl etc.) are present
-#   3. Verify this tarball's file checksums against manifest.checksums
-#   4. Read existing state.json (if any); decide fresh-install vs upgrade
-#   5. Run a matching migration script from migrate/ (if any)
-#   6. Deploy bundled Python 3.12 + uv runtimes to $HOME/.local/hermes-agent/runtime/
-#   7. Use uv to create a venv and pip-install the bundled hermes-agent wheel +
-#      all transitive deps from a configured PyPI mirror
-#   8. Symlink hermes (CLI) into $HOME/.local/bin
-#   9. Run `hermes --version` to verify
+#   1. Refuse root
+#   2. Check system tools
+#   3. Verify Python + uv versions meet manifest.runtime_requirements
+#   4. Verify file checksums against manifest.checksums
+#   5. Existing install / migration check
+#   6. Stage bundled wheel + wheels/ into $DEPLOY_ROOT/cache
+#   7. uv venv + uv pip install --no-index --find-links (offline)
+#   8. Symlink hermes CLI
+#   9. Verify `hermes --version`
 #  10. Write state.json
-#
-# NOT bundled:
-#   - hermes-agent's 30+ transitive deps (openai, pydantic, fastapi, mcp, ...)
-#     These are pulled live from a PyPI mirror on first install.
-#     Run tools/fetch.sh to pre-populate payload/wheels/ for fully-offline install.
-#
-# Mirrors tested at packaging time:
-#   - https://mirrors.aliyun.com/pypi/simple/  (China-friendly)
-#   - https://pypi.tuna.tsinghua.edu.cn/simple/
-#   - https://pypi.org/simple/  (default if no override)
-#
-# Override at install time with environment variable:
-#   AGENT_MARKETPLACE_PYPI_MIRROR=https://pypi.tuna.tsinghua.edu.cn/simple/ \
-#     ./install.sh
 
 set -euo pipefail
 
@@ -41,14 +34,9 @@ VERSION="0.18.2"
 TARGET_ROOT="${AGENT_MARKETPLACE_TARGET_ROOT:-$HOME/.local}"
 STATE_DIR="$TARGET_ROOT/state"
 STATE_FILE="$STATE_DIR/hermes-agent.state.json"
-RUNTIME_ROOT="$TARGET_ROOT/hermes-agent/runtime"
 DEPLOY_ROOT="$TARGET_ROOT/hermes-agent/$VERSION"
 VENV_ROOT="$DEPLOY_ROOT/venv"
 WHEEL_DIR="$DEPLOY_ROOT/cache"
-
-PYTHON_BIN="$RUNTIME_ROOT/python/bin/python3.12"
-UV_BIN="$RUNTIME_ROOT/uv/uv"
-PYPI_MIRROR="${AGENT_MARKETPLACE_PYPI_MIRROR:-https://mirrors.aliyun.com/pypi/simple/}"
 
 # --- helpers ------------------------------------------------------------------
 log()  { echo "[$AGENT/$VERSION] $*" >&2; }
@@ -63,7 +51,7 @@ if [[ "$(id -u)" -eq 0 ]]; then
 fi
 
 # --- 2. check system tools ----------------------------------------------------
-REQUIRED_TOOLS=(tar gzip sha256sum bash grep sed awk find xargs mkdir cp chmod curl jq)
+REQUIRED_TOOLS=(tar gzip sha256sum bash grep sed awk find xargs mkdir cp chmod jq python3.12 uv)
 for tool in "${REQUIRED_TOOLS[@]}"; do
   if ! command -v "$tool" >/dev/null 2>&1; then
     fail "required system tool '$tool' not found on PATH (exit 40)" 40
@@ -81,7 +69,39 @@ CHANNEL=$(m '.channel // "stable"')
 case "$(uname -s)" in Linux) ;; *) fail "unsupported OS: $(uname -s)" 20 ;; esac
 case "$(uname -m)"    in x86_64) ;; *) fail "unsupported arch: $(uname -m)" 20 ;; esac
 
-# --- 5. verify file checksums -------------------------------------------------
+# --- 5. verify runtime (Python + uv) -----------------------------------------
+log "verifying runtime: Python + uv"
+
+PY_REQ=$(jq -r '.runtime_requirements[] | select(.name=="python") | .version' manifest.json)
+PY_HINT=$(jq -r '.runtime_requirements[] | select(.name=="python") | .install_hint' manifest.json)
+PY_ACTUAL=$(python3.12 --version 2>/dev/null | awk '{print $2}' || echo "0.0.0")
+PY_MAJOR=$(echo "$PY_ACTUAL" | cut -d. -f1)
+PY_MINOR=$(echo "$PY_ACTUAL" | cut -d. -f2)
+log "  python: required=$PY_REQ actual=$PY_ACTUAL"
+if [[ "$PY_MAJOR" -ne 3 || "$PY_MINOR" -ne 12 ]]; then
+  fail "Python $PY_REQ required (you have $PY_ACTUAL). $PY_HINT
+
+Or run 'tools/install-runtime.sh install --from-manifest $(pwd)/manifest.json' on the target machine (Ubuntu 24.04)." 50
+fi
+ok "  Python $PY_ACTUAL satisfies $PY_REQ"
+
+UV_REQ=$(jq -r '.runtime_requirements[] | select(.name=="uv") | .version' manifest.json)
+UV_HINT=$(jq -r '.runtime_requirements[] | select(.name=="uv") | .install_hint' manifest.json)
+UV_ACTUAL=$(uv --version 2>/dev/null | awk '{print $2}' || echo "0.0.0")
+UV_REQ_MIN=$(echo "$UV_REQ" | grep -oE '[0-9]+\.[0-9]+' | head -1)
+UV_ACT_MAJOR=$(echo "$UV_ACTUAL" | cut -d. -f1)
+UV_ACT_MINOR=$(echo "$UV_ACTUAL" | cut -d. -f2)
+UV_REQ_MAJOR=$(echo "$UV_REQ_MIN" | cut -d. -f1)
+UV_REQ_MINOR=$(echo "$UV_REQ_MIN" | cut -d. -f2)
+log "  uv: required=$UV_REQ actual=$UV_ACTUAL"
+if [[ "$UV_ACT_MAJOR" -lt "$UV_REQ_MAJOR" ]] || { [[ "$UV_ACT_MAJOR" -eq "$UV_REQ_MAJOR" ]] && [[ "$UV_ACT_MINOR" -lt "$UV_REQ_MINOR" ]]; }; then
+  fail "uv $UV_REQ required (you have $UV_ACTUAL). $UV_HINT
+
+Or run 'tools/install-runtime.sh install --from-manifest $(pwd)/manifest.json' on the target machine (Ubuntu 24.04)." 50
+fi
+ok "  uv $UV_ACTUAL satisfies $UV_REQ"
+
+# --- 6. verify file checksums -------------------------------------------------
 log "verifying file checksums against manifest.checksums ..."
 ENTRIES=$(jq -r '.checksums | to_entries[]? | "\(.key)\t\(.value)"' manifest.json)
 while IFS=$'\t' read -r path expected; do
@@ -103,15 +123,13 @@ This tarball may be corrupted or tampered with. Re-download." 50
 done <<< "$ENTRIES"
 ok "manifest checksums verified"
 
-# --- 6. existing install + migration -----------------------------------------
+# --- 7. existing install + migration -----------------------------------------
 mkdir -p "$STATE_DIR"
 PREV_VERSION=""
 PREV_SOURCE=""
-PREV_DEPLOY=""
 if [[ -f "$STATE_FILE" ]]; then
   PREV_VERSION=$(jq -r '.version // ""' "$STATE_FILE")
   PREV_SOURCE=$(jq -r '.source // ""' "$STATE_FILE")
-  PREV_DEPLOY=$(jq -r '.deploy_root // ""' "$STATE_FILE")
   if [[ "$PREV_VERSION" == "$VERSION" && "$PREV_SOURCE" == "$SOURCE_TREE" ]]; then
     log "version $VERSION ($SOURCE_TREE) already installed — exit 10"
     emit "STATE_PATH" "$STATE_FILE"
@@ -122,8 +140,8 @@ if [[ -f "$STATE_FILE" ]]; then
 fi
 
 if [[ -n "$PREV_VERSION" && -n "$PREV_SOURCE" && "$PREV_SOURCE" == "$SOURCE_TREE" ]]; then
-  MAJOR_MINOR="${PREV_VERSION%.*}"   # 0.18
-  MAJOR="${MAJOR_MINOR%.*}"          # 0
+  MAJOR_MINOR="${PREV_VERSION%.*}"
+  MAJOR="${MAJOR_MINOR%.*}"
   for s in "migrate/from-${PREV_VERSION}.sh" "migrate/from-${MAJOR_MINOR}.x.sh" "migrate/from-${MAJOR}.x.x.sh"; do
     if [[ -x "$s" ]]; then
       log "running migration: $s"
@@ -134,33 +152,32 @@ if [[ -n "$PREV_VERSION" && -n "$PREV_SOURCE" && "$PREV_SOURCE" == "$SOURCE_TREE
   done
 fi
 
-# --- 7. deploy runtime --------------------------------------------------------
-log "deploying Python 3.12 + uv runtime to $RUNTIME_ROOT ..."
-mkdir -p "$RUNTIME_ROOT"
-cp -a runtime/python/. "$RUNTIME_ROOT/python/"
-cp -a runtime/uv/. "$RUNTIME_ROOT/uv/"
-ok "  runtime deployed"
+# --- 8. stage bundled wheels ---------------------------------------------------
+log "staging bundled wheels into $WHEEL_DIR ..."
+mkdir -p "$WHEEL_DIR"
+# Copy main wheel + transitive wheels
+cp payload/hermes_agent-${VERSION}-py3-none-any.whl "$WHEEL_DIR/" || true
+if [[ -d payload/wheels ]]; then
+  cp payload/wheels/*.whl "$WHEEL_DIR/" || true
+fi
+WHEEL_COUNT=$(ls "$WHEEL_DIR"/*.whl 2>/dev/null | wc -l)
+ok "  staged $WHEEL_COUNT wheels"
 
-# --- 8. create venv + install -------------------------------------------------
+# --- 9. create venv + offline install -----------------------------------------
 log "creating venv at $VENV_ROOT ..."
 mkdir -p "$DEPLOY_ROOT"
-"$PYTHON_BIN" -m venv "$VENV_ROOT" || fail "venv creation failed" 60
+python3.12 -m venv "$VENV_ROOT" || fail "venv creation failed" 60
 
-# Pre-stage the bundled wheel
-mkdir -p "$WHEEL_DIR"
-cp payload/hermes_agent-${VERSION}-py3-none-any.whl "$WHEEL_DIR/" || true
-ok "  staged bundled wheel"
+log "installing hermes-agent + transitive deps from bundled wheels (offline) ..."
+# uv --no-index --find-links reads only from $WHEEL_DIR (no network).
+uv pip install \
+  --python "$VENV_ROOT/bin/python" \
+  --no-index \
+  --find-links "$WHEEL_DIR" \
+  "hermes-agent==$VERSION" \
+  || fail "uv pip install failed (wheels complete? python version match?)" 60
 
-log "installing hermes-agent + transitive deps from $PYPI_MIRROR ..."
-# Use uv pip for fast resolution; allow network for the transitive deps
-# (the wheel itself is local; deps come from the mirror)
-UV_INDEX_URL="$PYPI_MIRROR" \
-  "$UV_BIN" pip install \
-    --python "$VENV_ROOT/bin/python" \
-    "$WHEEL_DIR/hermes_agent-${VERSION}-py3-none-any.whl" \
-  || fail "uv pip install failed (mirror reachable? transitive deps compatible?)" 60
-
-# --- 9. symlink CLI -----------------------------------------------------------
+# --- 10. symlink CLI ----------------------------------------------------------
 HERMES_BIN="$VENV_ROOT/bin/hermes"
 if [[ ! -x "$HERMES_BIN" ]]; then
   fail "hermes CLI not found at $HERMES_BIN after install" 30
@@ -169,7 +186,7 @@ mkdir -p "$TARGET_ROOT/bin"
 ln -sf "$HERMES_BIN" "$TARGET_ROOT/bin/hermes"
 ok "  linked: $TARGET_ROOT/bin/hermes -> $HERMES_BIN"
 
-# --- 10. verify ---------------------------------------------------------------
+# --- 11. verify ---------------------------------------------------------------
 log "verifying install with 'hermes --version' ..."
 set +e
 VERSION_OUTPUT=$("$HERMES_BIN" --version 2>&1)
@@ -180,15 +197,18 @@ if [[ $RC -ne 0 ]] || [[ -z "$VERSION_OUTPUT" ]]; then
 fi
 ok "verified: $VERSION_OUTPUT"
 
-# --- 11. write state ----------------------------------------------------------
+# --- 12. write state ----------------------------------------------------------
 NOW=$(date -u +%Y-%m-%dT%H:%M:%SZ)
 
 INSTALLED_FILES=(
   "$VERSION/venv/"
   "$VERSION/cache/"
-  "runtime/python/bin/python3.12"
-  "runtime/uv/uv"
 )
+
+PREV_STATE_JSON="{}"
+if [[ -f "$STATE_FILE" ]]; then
+  PREV_STATE_JSON=$(jq -c 'del(.installed_at)' "$STATE_FILE" 2>/dev/null || echo "{}")
+fi
 
 jq -n \
   --arg agent "$AGENT" \
@@ -201,10 +221,9 @@ jq -n \
   --argjson installed_files "$(printf '%s\n' "${INSTALLED_FILES[@]}" | jq -R . | jq -s .)" \
   --arg installed_at "$NOW" \
   --arg manifest_sha256 "$(sha256sum manifest.json | awk '{print $1}')" \
-  --arg runtime_python_version "3.12.13" \
-  --arg runtime_uv_version "0.11.28" \
-  --arg previous_version "$PREV_VERSION" \
-  --arg pypi_mirror "$PYPI_MIRROR" \
+  --arg python_version "$PY_ACTUAL" \
+  --arg uv_version "$UV_ACTUAL" \
+  --argjson previous "$PREV_STATE_JSON" \
   '{
     agent: $agent,
     source: $source,
@@ -216,26 +235,23 @@ jq -n \
     installed_files: $installed_files,
     manifest_sha256: $manifest_sha256,
     installed_at: $installed_at,
-    runtime: { python: $runtime_python_version, uv: $runtime_uv_version },
-    pypi_mirror: $pypi_mirror,
-    previous: { version: $previous_version }
+    runtime: { python: $python_version, uv: $uv_version },
+    previous: $previous
   }' > "$STATE_FILE.new"
 mv "$STATE_FILE.new" "$STATE_FILE"
 chmod 0644 "$STATE_FILE"
 ok "wrote state file: $STATE_FILE"
 
-# --- 12. summary --------------------------------------------------------------
+# --- 13. summary --------------------------------------------------------------
 emit "STATE_PATH"        "$STATE_FILE"
 emit "INSTALLED_VERSION" "$VERSION_OUTPUT"
 emit "DEPLOY_ROOT"       "$DEPLOY_ROOT"
-emit "RUNTIME_ROOT"      "$RUNTIME_ROOT"
 emit "VENV_ROOT"         "$VENV_ROOT"
-emit "PYPI_MIRROR"       "$PYPI_MIRROR"
 
-log "hermes-agent $VERSION installed."
+log "hermes-agent $VERSION installed (offline)."
 log "binary:   $TARGET_ROOT/bin/hermes"
-log "python:   $("$PYTHON_BIN" --version 2>&1)"
-log "uv:       $("$UV_BIN" --version 2>&1)"
+log "python:   $PY_ACTUAL (system)"
+log "uv:       $UV_ACTUAL (system)"
 log "venv:     $VENV_ROOT"
 log "PATH:     $TARGET_ROOT/bin (add 'export PATH=\$HOME/.local/bin:\$PATH' to your shell rc)"
 exit 0
