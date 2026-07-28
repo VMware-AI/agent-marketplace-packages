@@ -34,40 +34,37 @@ fi
 
 DEPLOY_ROOT=$(jq -r '.deploy_root' "$STATE_FILE")
 
-mapfile -t FILES < <(jq -r '.installed_files[]' "$STATE_FILE")
+# Remove the symlink under $TARGET_ROOT/bin/ first (it lives outside DEPLOY_ROOT).
+TARGET_LINK="$TARGET_ROOT/bin/opencode"
+if [[ -L "$TARGET_LINK" || -f "$TARGET_LINK" ]]; then
+  rm -f "$TARGET_LINK"
+  echo "  removed link: $TARGET_LINK"
+fi
 
-echo "[$AGENT/$VERSION] removing installed files from $DEPLOY_ROOT ..."
-for rel in "${FILES[@]}"; do
-  # Files were recorded relative to DEPLOY_ROOT (see install.sh)
-  path="$DEPLOY_ROOT/$rel"
-  # Resolve symlinks: the actual binary lives under DEPLOY_ROOT, the symlink under TARGET_ROOT/bin
-  case "$rel" in
-    ../bin/opencode)
-      target="$TARGET_ROOT/bin/opencode"
-      if [[ -L "$target" || -f "$target" ]]; then
-        rm -f "$target"
-        echo "  removed link: $target"
-      fi
-      ;;
-    *)
-      if [[ -f "$path" ]]; then
-        rm -f "$path"
-        echo "  removed: $path"
-      fi
-      ;;
-  esac
+# Wipe the whole deploy_root tree. install.sh places every payload file
+# under $DEPLOY_ROOT, so a single rm -rf is the authoritative cleanup —
+# iterating state.json.installed_files leaves the parent dirs (bin/, etc.)
+# behind as empty cruft. Per-file lists are still written to state.json for
+# auditability but uninstall doesn't trust them as the source of truth.
+echo "[$AGENT/$VERSION] removing deploy_root: $DEPLOY_ROOT"
+if [[ -d "$DEPLOY_ROOT" ]]; then
+  rm -rf "$DEPLOY_ROOT"
+fi
+
+# Walk up the parent chain under TARGET_ROOT and rmdir anything that's now
+# empty. We do this depth-first so child empties before parents (rmdir fails
+# on non-empty dirs, hence the silent ||true). Stop at TARGET_ROOT itself —
+# we never delete the user's install root.
+parent="$(dirname "$DEPLOY_ROOT")"
+while [[ "$parent" != "$TARGET_ROOT" && "$parent" != "/" && "$parent" != "." ]]; do
+  if [[ -d "$parent" ]] && [[ -z "$(ls -A "$parent" 2>/dev/null)" ]]; then
+    rmdir "$parent" 2>/dev/null || break
+    echo "  removed empty dir: $parent"
+  else
+    break
+  fi
+  parent="$(dirname "$parent")"
 done
-
-# Remove the version directory if empty
-if [[ -d "$DEPLOY_ROOT" ]] && [[ -z "$(ls -A "$DEPLOY_ROOT" 2>/dev/null)" ]]; then
-  rmdir "$DEPLOY_ROOT" 2>/dev/null || true
-fi
-
-# Remove shared/ or agent root if empty
-AGENT_ROOT="$TARGET_ROOT/opencode"
-if [[ -d "$AGENT_ROOT" ]] && [[ -z "$(ls -A "$AGENT_ROOT" 2>/dev/null)" ]]; then
-  rmdir "$AGENT_ROOT" 2>/dev/null || true
-fi
 
 rm -f "$STATE_FILE"
 echo "[$AGENT/$VERSION] state file removed: $STATE_FILE"

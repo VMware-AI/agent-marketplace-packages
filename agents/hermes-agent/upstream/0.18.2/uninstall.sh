@@ -41,6 +41,20 @@ if [[ -d "$DEPLOY_ROOT" ]]; then
   echo "  removed deploy_root: $DEPLOY_ROOT"
 fi
 
+# Walk up the parent chain under TARGET_ROOT and rmdir anything that's now
+# empty (depth-first; rmdir is silent on non-empty dirs). Stops at
+# TARGET_ROOT — never delete the user's install root.
+parent="$(dirname "$DEPLOY_ROOT")"
+while [[ "$parent" != "$TARGET_ROOT" && "$parent" != "/" && "$parent" != "." ]]; do
+  if [[ -d "$parent" ]] && [[ -z "$(ls -A "$parent" 2>/dev/null)" ]]; then
+    rmdir "$parent" 2>/dev/null || break
+    echo "  removed empty dir: $parent"
+  else
+    break
+  fi
+  parent="$(dirname "$parent")"
+done
+
 # No runtime is bundled anymore — nothing to remove on the runtime side.
 # (Earlier versions of this installer vendored Python + uv under
 # $TARGET_ROOT/hermes-agent/runtime; that dir will simply not exist

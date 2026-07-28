@@ -42,12 +42,6 @@ func buildIndexFromDir(outDir string) (*apitypes.Index, error) {
 
 	for _, tarPath := range entries {
 		tarName := filepath.Base(tarPath)
-		// Parse name / source / version from "<name>-<source>-<version>.tar.gz"
-		parsed, err := parseTarballName(tarName)
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "skipping %s: %v\n", tarName, err)
-			continue
-		}
 
 		files, err := extractTarballFiles(tarPath, "manifest.json", "meta.yaml")
 		if err != nil {
@@ -94,7 +88,11 @@ func buildIndexFromDir(outDir string) (*apitypes.Index, error) {
 		}
 
 		// Aggregate into the per-(name,source) Agent entry.
-		key := parsed.name + "|" + parsed.source
+		// Name comes from the manifest, NOT from splitting the tarball
+		// filename — CalVer-style versions like "2026.7.1-2" contain
+		// dashes that would split the name incorrectly.
+		key := m.Agent + "|" + m.Source
+		parsed := parsedName{name: m.Agent, source: m.Source, version: m.Version}
 		agent, ok := agentEntries[key]
 		if !ok {
 			agent = &apitypes.Agent{

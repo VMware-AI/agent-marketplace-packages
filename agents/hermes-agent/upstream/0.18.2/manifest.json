@@ -4,7 +4,7 @@
   "checksums": {
     "install.sh": "sha256:c12211320e419a1b5a04e152ddde39de5af89bb4a2741d47c481ff41a3fee89d",
     "payload/hermes_agent-0.18.2-py3-none-any.whl": "sha256:8f02155cfc84b28bd98551cd18dffec0efa9ec070dd08f90f1a850f1c779492f",
-    "uninstall.sh": "sha256:1a8c92141e140c12ca04863a55e050ac19f0ad775e0ee1dadb7ec9733ba2b611"
+    "uninstall.sh": "sha256:eee20239407e43fb448a357d33ef49ff694b317f6c6607f352ab1a6ceeed30c9"
   },
   "fork_of": null,
   "payload": [

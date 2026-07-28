@@ -4,7 +4,7 @@
   "checksums": {
     "install.sh": "sha256:c712b83e5be0a649038310c79ebf279f42ce85448bae2e71d9015b0276de0cee",
     "payload/bin/opencode": "sha256:f7fe18703f9d0cc2352d0a94c8c62bfd378b6681e017a2bbf78c2ecadad75544",
-    "uninstall.sh": "sha256:b71a125cc5b22cdb6aeb8e70cd6c8cf6198c08fc2d1caf072f64d586ce278930"
+    "uninstall.sh": "sha256:9b9c2f77b699cad27d0a05fce6c2d4fd8e8f531cabf5b05f3f88cca932356483"
   },
   "fork_of": null,
   "payload": [

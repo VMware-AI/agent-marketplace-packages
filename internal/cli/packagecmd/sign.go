@@ -28,9 +28,6 @@ func NewSignCmd() *cobra.Command {
 			if _, err := os.Stat(tarball); err != nil {
 				return fmt.Errorf("tarball not found: %w", err)
 			}
-			if _, err := os.Stat(gpgBin); err != nil {
-				return fmt.Errorf("gpg not found at %s (install with apt install gnupg)", gpgBin)
-			}
 			outPath := tarball + ".asc"
 			args2 := []string{"--batch", "--yes", "--armor", "--detach-sign", "--output", outPath}
 			if keyID != "" {
@@ -40,6 +37,11 @@ func NewSignCmd() *cobra.Command {
 			if dryRun {
 				fmt.Printf("(dry-run) gpg %v\n", args2)
 				return nil
+			}
+			// Only check gpg exists when actually running — dry-run is for
+			// previewing the command on a host that may not have gpg.
+			if _, err := os.Stat(gpgBin); err != nil {
+				return fmt.Errorf("gpg not found at %s (install with apt install gnupg)", gpgBin)
 			}
 			gpgCmd := exec.Command(gpgBin, args2...)
 			gpgCmd.Stdout = os.Stdout

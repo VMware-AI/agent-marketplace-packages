@@ -3,7 +3,7 @@
   "channel": "stable",
   "checksums": {
     "install.sh": "sha256:ef8f9fb7a4c26528be8f7f796c3514178c000277e53537fea851bfe3e9876752",
-    "uninstall.sh": "sha256:f2b74f5b58a3c992f11b94b742c8a4908a2746cd82fbe43782cf22d91dd929a7"
+    "uninstall.sh": "sha256:041e9864eccb723c48327953beb00e7a32e49eaa6e1d8a94328ddf045cedf52f"
   },
   "fork_of": null,
   "payload": [
