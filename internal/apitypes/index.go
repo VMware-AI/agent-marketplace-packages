@@ -63,6 +63,28 @@ type Manifest struct {
 	Tarball            *TarballRef         `json:"tarball"`
 	Upgrade            *Upgrade            `json:"upgrade"`
 	Scripts            *Scripts            `json:"scripts"`
+
+	// Mirror of internal/manifest.ServiceSpec / ConfigSpec (schema 1.1+).
+	Services []ServiceSpec `json:"services"`
+	Configs  []ConfigSpec  `json:"configs"`
+}
+
+// ServiceSpec mirrors internal/manifest.ServiceSpec.
+type ServiceSpec struct {
+	Name        string   `json:"name"`
+	Command     []string `json:"command"`
+	Args        []string `json:"args,omitempty"`
+	Restart     string   `json:"restart"`
+	WorkingDir  string   `json:"working_dir,omitempty"`
+	Description string   `json:"description,omitempty"`
+}
+
+// ConfigSpec mirrors internal/manifest.ConfigSpec.
+type ConfigSpec struct {
+	Name     string `json:"name"`
+	File     string `json:"file"`
+	RenderTo string `json:"render_to"`
+	Mode     string `json:"mode"`
 }
 
 type Upstream struct {

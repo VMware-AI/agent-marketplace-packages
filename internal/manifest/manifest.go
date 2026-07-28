@@ -33,6 +33,47 @@ type Manifest struct {
 
 	Upgrade *UpgradeSpec `json:"upgrade"`
 	Scripts *Scripts     `json:"scripts"`
+
+	// Services (added in schema_version 1.1) describe systemd --user units
+	// that agentpkg should write and enable after install.sh runs. Each unit
+	// has a fixed Command + Restart policy; configuration lives in the
+	// Configs[] entries below, not here.
+	Services []ServiceSpec `json:"services"`
+
+	// Configs (added in schema_version 1.1) describes configuration files
+	// that the agent's own render-config.sh produces. agentpkg does NOT
+	// generate these files — it only verifies them after the render script
+	// runs (Stage 1 of the daemon-driven install flow).
+	Configs []ConfigSpec `json:"configs"`
+}
+
+// ServiceSpec describes a single systemd --user unit that agentpkg should
+// install after the agent's install.sh completes. The Command is the
+// argv[0..N] that systemd will exec; WorkingDirectory is an absolute path
+// (typically {{DEPLOY_ROOT}}); Restart follows systemd's Restart= spec.
+type ServiceSpec struct {
+	Name        string   `json:"name"`
+	Command     []string `json:"command"`
+	Args        []string `json:"args,omitempty"`
+	Restart     string   `json:"restart"`                 // on-failure|always|no
+	WorkingDir  string   `json:"working_dir,omitempty"`
+	Description string   `json:"description,omitempty"`
+}
+
+// ConfigSpec describes a single configuration file produced by the agent's
+// render-config.sh script. The script owns writing the file at RenderTo
+// (chmod 0600 by convention for sensitive files); agentpkg only verifies
+// the file appeared.
+//
+// `File` is the basename the script should produce in its output directory
+// (informational — agentpkg does not write the file itself).
+// `RenderTo` is the final on-host path (e.g. "~/.openclaw/openclaw.json").
+// `Mode` is informational; the script is responsible for chmod.
+type ConfigSpec struct {
+	Name     string `json:"name"`
+	File     string `json:"file"`
+	RenderTo string `json:"render_to"`
+	Mode     string `json:"mode"`
 }
 
 type UpstreamRef struct {
