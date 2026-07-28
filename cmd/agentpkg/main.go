@@ -29,6 +29,7 @@ func main() {
 	root.AddCommand(cli.NewIndexCmd(&cfgPath, &credsPath))
 	root.AddCommand(cli.NewShowCmd(&cfgPath, &credsPath))
 	root.AddCommand(cli.NewDownloadCmd(&cfgPath, &credsPath))
+	root.AddCommand(cli.NewConfigCmd(&cfgPath, &credsPath))
 	root.AddCommand(cli.NewInstallCmd(&cfgPath, &credsPath))
 	root.AddCommand(cli.NewUpgradeCmd(&cfgPath, &credsPath))
 	root.AddCommand(cli.NewUninstallCmd(&cfgPath, &credsPath))

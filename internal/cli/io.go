@@ -2,6 +2,7 @@ package cli
 
 import (
 	"bufio"
+	"encoding/json"
 	"fmt"
 	"io"
 	"os"
@@ -24,6 +25,12 @@ func readLineFrom(r io.Reader) ([]byte, error) {
 // readAll reads everything from r. Convenience wrapper.
 func readAll(r io.Reader) ([]byte, error) {
 	return io.ReadAll(r)
+}
+
+// jsonMarshalIndent is a thin wrapper around encoding/json for tests and
+// helpers that don't want to import encoding/json directly.
+func jsonMarshalIndent(v any, prefix, indent string) ([]byte, error) {
+	return json.MarshalIndent(v, prefix, indent)
 }
 
 // writeFile writes data to path with mode. Parent directory must exist.

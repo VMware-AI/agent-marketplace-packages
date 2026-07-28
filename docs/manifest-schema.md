@@ -6,7 +6,7 @@ Every version directory must contain `manifest.json`. This file is the single so
 
 ```json
 {
-  "schema_version": "1.0",
+  "schema_version": "1.1",
   "agent":         "opencode",
   "source":        "upstream",
   "version":       "0.0.55",
@@ -23,13 +23,16 @@ Every version directory must contain `manifest.json`. This file is the single so
   "checksums": { ... },
   "tarball":   { ... },
   "upgrade":   { ... },
-  "scripts":   { ... }
+  "scripts":   { ... },
+
+  "services":  [ ... ],
+  "configs":   [ ... ]
 }
 ```
 
 | Field | Required | Type | Notes |
 |-------|----------|------|-------|
-| `schema_version` | yes | string | `"1.0"` for now. Bumped on breaking schema changes. |
+| `schema_version` | yes | string | `"1.1"` for current. Bumped on breaking schema changes. (1.0 manifests still work — `services` and `configs` are optional.) |
 | `agent` | yes | string | One of `opencode`, `openclaw`, `hermes-agent`, ... |
 | `source` | yes | enum | `upstream` (mirror of upstream release) or `ours` (internal fork) |
 | `version` | yes | string | The version we're packaging. Must match `upstream.version` for `source=upstream`. |
@@ -191,3 +194,51 @@ Auto-filled by `tools/pack.sh` after a successful tar. `signature_type` is `"non
 ```
 
 Names of the install + uninstall scripts in this directory. (Default: same names as the JSON keys.)
+
+## services (schema 1.1+)
+
+```json
+"services": [
+  {
+    "name":        "gateway",
+    "command":     ["openclaw", "gateway", "--port", "8080"],
+    "args":        [],
+    "restart":     "on-failure",
+    "working_dir": "{{DEPLOY_ROOT}}",
+    "description": "openclaw gateway daemon"
+  }
+]
+```
+
+| Field | Required | Notes |
+|-------|----------|-------|
+| `name` | yes | Unique within the agent. Becomes the suffix on the systemd unit: `<agent>-<name>.service` |
+| `command` | yes | argv to exec as `ExecStart=` |
+| `args` | no | Appended to `command` (informational) |
+| `restart` | yes | One of `on-failure`, `always`, `no` |
+| `working_dir` | no | systemd `WorkingDirectory=`. `{{DEPLOY_ROOT}}` is substituted with `$TARGET_ROOT/<agent>/<version>`. Defaults to `{{DEPLOY_ROOT}}` |
+| `description` | no | systemd `Description=` |
+
+agentpkg runs after `install.sh` succeeds and: writes the unit file to `~/.config/systemd/user/<agent>-<name>.service`, runs `systemctl --user daemon-reload`, then `systemctl --user enable --now <unit>`. Soft-fails (warning) on `systemctl --user` absence. The agent's `WorkingDirectory=` is created by `install.sh` before the unit starts.
+
+## configs (schema 1.1+)
+
+```json
+"configs": [
+  {
+    "name":     "openclaw",
+    "file":     "openclaw.json",
+    "render_to": "~/.openclaw/openclaw.json",
+    "mode":     "0600"
+  }
+]
+```
+
+| Field | Required | Notes |
+|-------|----------|-------|
+| `name` | yes | Logical name (informational) |
+| `file` | yes | Basename the agent's `render-config.sh` writes |
+| `render_to` | yes | Final on-host path (e.g. `~/.openclaw/openclaw.json`). agentpkg records this for uninstall; the agent's render script owns the actual write |
+| `mode` | yes | chmod mode (string, e.g. `"0600"`). Informational — the render script performs the chmod |
+
+The render-config.sh script for each agent lives at `<version>/render-config.sh` in the tarball and is invoked by `agentpkg config generate <agent> --config-input <file>` (Stage 1 of install). The script reads `$AGENT_MARKETPLACE_CONFIG_INPUT` (a JSON file the daemon writes), parses its keys, and writes the config file to `render_to` with the declared `mode`.
