@@ -1,0 +1,14 @@
+# Minimal marketplace-api image — uses a locally cross-compiled binary
+# rather than running go build inside Docker. Bypasses the COPY-cmd/internal
+# ambiguity that bites the project's main Dockerfile on this host.
+
+FROM alpine:3.20
+RUN apk add --no-cache ca-certificates tzdata
+
+COPY bin/marketplace-api /usr/local/bin/marketplace-api
+
+RUN mkdir -p /etc/agent-marketplace /var/lib/agent-marketplace
+
+EXPOSE 8443
+ENTRYPOINT ["/usr/local/bin/marketplace-api"]
+CMD ["--config", "/etc/agent-marketplace/config.yaml"]
