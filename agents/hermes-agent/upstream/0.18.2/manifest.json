@@ -6,6 +6,14 @@
     "payload/hermes_agent-0.18.2-py3-none-any.whl": "sha256:8f02155cfc84b28bd98551cd18dffec0efa9ec070dd08f90f1a850f1c779492f",
     "uninstall.sh": "sha256:eee20239407e43fb448a357d33ef49ff694b317f6c6607f352ab1a6ceeed30c9"
   },
+  "configs": [
+    {
+      "file": "hermes.env",
+      "mode": "0600",
+      "name": "hermes",
+      "render_to": "~/.hermes/.env"
+    }
+  ],
   "fork_of": null,
   "payload": [
     {
@@ -44,7 +52,8 @@
       "sed",
       "awk",
       "findutils",
-      "curl"
+      "curl",
+      "jq"
     ]
   },
   "runtime_requirements": [
@@ -61,11 +70,25 @@
       "version": ">=0.11.0"
     }
   ],
-  "schema_version": "1.0",
+  "schema_version": "1.1",
   "scripts": {
     "install": "install.sh",
     "uninstall": "uninstall.sh"
   },
+  "services": [
+    {
+      "command": [
+        "hermes",
+        "dashboard",
+        "--port",
+        "8080"
+      ],
+      "description": "hermes-agent web dashboard (NousResearch), pinned to port 8080",
+      "name": "dashboard",
+      "restart": "on-failure",
+      "working_dir": "{{DEPLOY_ROOT}}"
+    }
+  ],
   "source": "upstream",
   "tarball": {
     "filename": "hermes-agent-upstream-0.18.2.tar.gz",

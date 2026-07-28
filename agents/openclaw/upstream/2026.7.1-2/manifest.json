@@ -5,6 +5,14 @@
     "install.sh": "sha256:ef8f9fb7a4c26528be8f7f796c3514178c000277e53537fea851bfe3e9876752",
     "uninstall.sh": "sha256:041e9864eccb723c48327953beb00e7a32e49eaa6e1d8a94328ddf045cedf52f"
   },
+  "configs": [
+    {
+      "file": "openclaw.json",
+      "mode": "0600",
+      "name": "openclaw",
+      "render_to": "~/.openclaw/openclaw.json"
+    }
+  ],
   "fork_of": null,
   "payload": [
     {
@@ -34,7 +42,8 @@
       "sed",
       "awk",
       "findutils",
-      "curl"
+      "curl",
+      "jq"
     ]
   },
   "runtime_requirements": [
@@ -45,11 +54,25 @@
       "version": ">=22.22.3 <23, >=24.15.0 <25, or >=25.9.0"
     }
   ],
-  "schema_version": "1.0",
+  "schema_version": "1.1",
   "scripts": {
     "install": "install.sh",
     "uninstall": "uninstall.sh"
   },
+  "services": [
+    {
+      "command": [
+        "openclaw",
+        "gateway",
+        "--port",
+        "8080"
+      ],
+      "description": "openclaw gateway daemon (openclaw.ai), pinned to port 8080",
+      "name": "gateway",
+      "restart": "on-failure",
+      "working_dir": "{{DEPLOY_ROOT}}"
+    }
+  ],
   "source": "upstream",
   "tarball": {
     "filename": "openclaw-upstream-2026.7.1-2.tar.gz",

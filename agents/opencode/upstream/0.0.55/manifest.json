@@ -6,6 +6,14 @@
     "payload/bin/opencode": "sha256:f7fe18703f9d0cc2352d0a94c8c62bfd378b6681e017a2bbf78c2ecadad75544",
     "uninstall.sh": "sha256:9b9c2f77b699cad27d0a05fce6c2d4fd8e8f531cabf5b05f3f88cca932356483"
   },
+  "configs": [
+    {
+      "file": "opencode.json",
+      "mode": "0600",
+      "name": "opencode",
+      "render_to": "~/.config/opencode/opencode.json"
+    }
+  ],
   "fork_of": null,
   "payload": [
     {
@@ -32,15 +40,30 @@
       "grep",
       "sed",
       "awk",
-      "findutils"
+      "findutils",
+      "jq"
     ]
   },
   "runtime": [],
-  "schema_version": "1.0",
+  "schema_version": "1.1",
   "scripts": {
     "install": "install.sh",
     "uninstall": "uninstall.sh"
   },
+  "services": [
+    {
+      "command": [
+        "opencode",
+        "web",
+        "--port",
+        "8080"
+      ],
+      "description": "opencode web UI (sst/opencode), pinned to port 8080",
+      "name": "web",
+      "restart": "on-failure",
+      "working_dir": "{{DEPLOY_ROOT}}"
+    }
+  ],
   "source": "upstream",
   "tarball": {
     "filename": "opencode-upstream-0.0.55.tar.gz",
