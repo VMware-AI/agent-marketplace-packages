@@ -3,7 +3,7 @@
   "channel": "stable",
   "checksums": {
     "install.sh": "sha256:c12211320e419a1b5a04e152ddde39de5af89bb4a2741d47c481ff41a3fee89d",
-    "payload/hermes_agent-0.18.2-py3-none-any.whl": "sha256:8f02155cfc84b28bd98551cd18dffec0efa9ec070dd08f90f1a850f1c779492f",
+    "payload/hermes_agent-0.19.0-py3-none-any.whl": "sha256:bd0bac012aee38a60894781f4597dc29ee7bedb3448540249921f10d3bef327f",
     "uninstall.sh": "sha256:eee20239407e43fb448a357d33ef49ff694b317f6c6607f352ab1a6ceeed30c9"
   },
   "configs": [
@@ -17,9 +17,9 @@
   "fork_of": null,
   "payload": [
     {
-      "dst": "{{TARGET_ROOT}}/hermes-agent/0.18.2/cache/hermes_agent-0.18.2-py3-none-any.whl",
+      "dst": "{{TARGET_ROOT}}/hermes-agent/0.18.2/cache/hermes_agent-0.19.0-py3-none-any.whl",
       "mode": "0644",
-      "src": "payload/hermes_agent-0.18.2-py3-none-any.whl"
+      "src": "payload/hermes_agent-0.19.0-py3-none-any.whl"
     },
     {
       "dst": "{{TARGET_ROOT}}/hermes-agent/0.18.2/cache/wheels/",
@@ -27,7 +27,7 @@
       "src": "payload/wheels/"
     }
   ],
-  "released_at": "2026-07-14",
+  "released_at": "2026-07-29",
   "requires": {
     "arch": [
       "x86_64"
@@ -61,7 +61,7 @@
       "install_hint": "apt install -y python3.12 (Ubuntu 22.04+) or use pyenv: 'pyenv install 3.12.13'",
       "name": "python",
       "verify_cmd": "python3.12 --version",
-      "version": ">=3.12,<3.13"
+      "version": ">=3.12,<3.14"
     },
     {
       "install_hint": "curl -LsSf https://astral.sh/uv/install.sh | sh  (or 'pip install uv' / 'apt install uv')",
@@ -96,6 +96,8 @@
   },
   "upgrade": {
     "compatible_from": [
+      "0.19.0",
+      "0.18.2",
       "0.18.1",
       "0.18.0"
     ],
@@ -113,10 +115,10 @@
   },
   "upstream": {
     "name": "hermes-agent",
-    "notes": "Main wheel + 60 transitive wheels pre-downloaded at build time via 'pip download --platform manylinux2014_x86_64 --python-version 3.12'. install.sh uses 'uv pip install --no-index --find-links' to do fully-offline install.",
-    "sha256": "sha256:8f02155cfc84b28bd98551cd18dffec0efa9ec070dd08f90f1a850f1c779492f",
-    "url": "https://mirrors.aliyun.com/pypi/packages/0c/4c/91652c61450763bfe165c65b83026503de0ac9ddad2c11ee522490bf4c2d/hermes_agent-0.18.2-py3-none-any.whl",
-    "version": "0.18.2"
+    "notes": "Main wheel pre-downloaded from PyPI. install.sh uses 'uv pip install --no-index --find-links' to do fully-offline install.",
+    "sha256": "sha256:bd0bac012aee38a60894781f4597dc29ee7bedb3448540249921f10d3bef327f",
+    "url": "https://files.pythonhosted.org/packages/e5/30/c85be8290e9565dc3c7a9720e93f3e59e09b1b163487be4946c3aa848f80/hermes_agent-0.19.0-py3-none-any.whl",
+    "version": "0.19.0"
   },
-  "version": "0.18.2"
+  "version": "0.19.0"
 }

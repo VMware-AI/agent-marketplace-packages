@@ -3,21 +3,21 @@
   "channel": "stable",
   "checksums": {
     "install.sh": "sha256:c712b83e5be0a649038310c79ebf279f42ce85448bae2e71d9015b0276de0cee",
-    "payload/bin/opencode": "sha256:f7fe18703f9d0cc2352d0a94c8c62bfd378b6681e017a2bbf78c2ecadad75544",
+    "payload/bin/opencode": "sha256:7c4d91c84d2bfdeabb59257e3490c5e5acb08f2aacb3e42f3ddc296a1c3f1aca",
     "uninstall.sh": "sha256:9b9c2f77b699cad27d0a05fce6c2d4fd8e8f531cabf5b05f3f88cca932356483"
   },
   "configs": [
     {
-      "file": "opencode.json",
+      "file": "opencode.jsonc",
       "mode": "0600",
       "name": "opencode",
-      "render_to": "~/.config/opencode/opencode.json"
+      "render_to": "~/.config/opencode/opencode.jsonc"
     }
   ],
   "fork_of": null,
   "payload": [
     {
-      "dst": "{{TARGET_ROOT}}/opencode/0.0.55/bin/opencode",
+      "dst": "{{TARGET_ROOT}}/opencode/1.18.9/bin/opencode",
       "mode": "0755",
       "src": "payload/bin/opencode"
     }
@@ -58,7 +58,7 @@
         "--port",
         "8080"
       ],
-      "description": "opencode web UI (sst/opencode), pinned to port 8080",
+      "description": "opencode web UI (anomalyco/opencode v1.18.9), pinned to port 8080",
       "name": "web",
       "restart": "on-failure",
       "working_dir": "{{DEPLOY_ROOT}}"
@@ -87,9 +87,9 @@
   "upstream": {
     "name": "opencode",
     "notes": "Outer tarball was unpacked and discarded; only the extracted `opencode` binary is preserved as payload/bin/opencode.",
-    "sha256": "sha256:7f1f41203e7920aec48f3e2216d334e9ce8c6d0a7b107ceb758fefa4d4c98025",
-    "url": "https://github.com/opencode-ai/opencode/releases/download/v0.0.55/opencode-linux-x86_64.tar.gz",
-    "version": "0.0.55"
+    "sha256": "sha256:TBD",
+    "url": "https://github.com/anomalyco/opencode/releases/download/v1.18.9/opencode-linux-x64.tar.gz",
+    "version": "1.18.9"
   },
-  "version": "0.0.55"
+  "version": "1.18.9"
 }
