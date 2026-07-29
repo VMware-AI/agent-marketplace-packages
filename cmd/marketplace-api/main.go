@@ -54,6 +54,11 @@ func main() {
 		log.Fatalf("load config: %v", err)
 	}
 
+	// Env-var overrides — env wins over config.yaml so operators can do
+	// "everything in compose/.env, no config file edit" if they want.
+	// Each var is optional; if unset, the config-file value stands.
+	applyEnvOverrides(cfg)
+
 	password := os.Getenv(cfg.Auth.PasswordEnv)
 	if password == "" {
 		log.Fatalf("auth.password_env %q is empty or unset", cfg.Auth.PasswordEnv)
@@ -112,6 +117,34 @@ func main() {
 	defer shutdownCancel()
 	if err := srv.Shutdown(shutdownCtx); err != nil {
 		log.Printf("shutdown error: %v", err)
+	}
+}
+
+// applyEnvOverrides lets MARKETPLACE_API_LISTEN / _DIST_DIR / _LOG_LEVEL
+// override the corresponding config.yaml values when set. Useful for
+// docker-compose / k8s deployments where putting every value in the
+// compose file is preferable to maintaining a separate config.yaml.
+//
+// Each var is opt-in: unset → keep config-file value. This means you can
+// ship a config.yaml with defaults and override only the fields that
+// vary per environment (port, log level) without touching the file.
+func applyEnvOverrides(cfg *Config) {
+	if v := os.Getenv("MARKETPLACE_API_LISTEN"); v != "" {
+		cfg.Server.Listen = v
+	}
+	if v := os.Getenv("MARKETPLACE_API_DIST_DIR"); v != "" {
+		cfg.Repo.DistDir = v
+	}
+	if v := os.Getenv("MARKETPLACE_API_LOG_LEVEL"); v != "" {
+		cfg.Logging.Level = v
+	}
+	// TLS overrides — for deployments that mount certs into well-known
+	// paths and want to choose the file names via env instead of config.
+	if v := os.Getenv("MARKETPLACE_API_TLS_CERT"); v != "" {
+		cfg.Server.TLSCert = v
+	}
+	if v := os.Getenv("MARKETPLACE_API_TLS_KEY"); v != "" {
+		cfg.Server.TLSKey = v
 	}
 }
 

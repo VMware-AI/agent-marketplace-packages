@@ -604,6 +604,34 @@ func extractRenderScriptFromTarball(tarballPath, version, destPath string) error
 	return fmt.Errorf("render-config.sh not found in tarball (tried: %v)", candidates)
 }
 
+// extractManifestBytesFromTarball extracts manifest.json from a tarball
+// and returns its raw bytes — without parsing. Useful for staging the
+// manifest to a tmpfile so render-config.sh can read it directly via
+// $AGENT_MARKETPLACE_MANIFEST. Same two-layout fallback as
+// extractManifestFromTarball.
+func extractManifestBytesFromTarball(tarballPath, version string) ([]byte, error) {
+	tmp, err := os.MkdirTemp("", "agentpkg-mf-")
+	if err != nil {
+		return nil, err
+	}
+	defer os.RemoveAll(tmp)
+	candidates := []string{
+		filepath.Join(version, "manifest.json"),
+		"manifest.json",
+	}
+	for _, name := range candidates {
+		out := filepath.Join(tmp, "manifest.json")
+		if err := runTarExtractTo(tarballPath, name, out); err == nil {
+			data, err := os.ReadFile(out)
+			if err != nil {
+				return nil, fmt.Errorf("read extracted manifest: %w", err)
+			}
+			return data, nil
+		}
+	}
+	return nil, fmt.Errorf("manifest.json not found in tarball (tried: %v)", candidates)
+}
+
 // runInstallScript extracts the tarball into a temp dir and runs install.sh.
 func runInstallScript(tarballPath, targetRoot, version string, _ bool) error {
 	tmp, err := os.MkdirTemp("", "agentpkg-install-")

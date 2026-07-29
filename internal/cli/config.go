@@ -127,6 +127,24 @@ func runConfigGenerate(c *Client, name, source, channel, version, targetRoot, ca
 		return err
 	}
 
+	// Stage the raw manifest.json to a tmpfile for render-config.sh. Manifest-
+	// driven render-config.sh needs $AGENT_MARKETPLACE_MANIFEST to read the
+	// configs[] schema (required_inputs, optional_inputs, supported_providers,
+	// etc.) without re-extracting from the tarball itself.
+	manifestBytes, err := extractManifestBytesFromTarball(cachePath, version)
+	if err != nil {
+		return err
+	}
+	manifestPath, err := os.CreateTemp("", "agentpkg-mf-*.json")
+	if err != nil {
+		return fmt.Errorf("create tmp for manifest: %w", err)
+	}
+	defer os.Remove(manifestPath.Name())
+	if _, err := manifestPath.Write(manifestBytes); err != nil {
+		return fmt.Errorf("write manifest tmp: %w", err)
+	}
+	manifestPath.Close()
+
 	// Extract render-config.sh to a tmpfile.
 	renderScriptPath, err := os.CreateTemp("", "agentpkg-render-")
 	if err != nil {
@@ -145,6 +163,7 @@ func runConfigGenerate(c *Client, name, source, channel, version, targetRoot, ca
 	cmd := exec.Command(renderScriptPath.Name())
 	cmd.Env = append(os.Environ(),
 		"AGENT_MARKETPLACE_CONFIG_INPUT="+inputPath,
+		"AGENT_MARKETPLACE_MANIFEST="+manifestPath.Name(),
 		"AGENT_MARKETPLACE_AGENT="+name,
 		"AGENT_MARKETPLACE_VERSION="+version,
 		"AGENT_MARKETPLACE_DEPLOY_ROOT="+deployRoot,
@@ -152,18 +171,20 @@ func runConfigGenerate(c *Client, name, source, channel, version, targetRoot, ca
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 	if err := cmd.Run(); err != nil {
-		// Exit code mapping: 1 → 70 (config error), anything else → 71.
+		// Exit code mapping: see mapRenderExitToCLI for the full contract.
+		// Extracted as a free function so the contract is unit-tested (see
+		// TestRenderConfigExitCodeMapping).
 		if exitErr, ok := err.(*exec.ExitError); ok {
-			switch exitErr.ExitCode() {
-			case 1:
-				// Use os.Exit to bypass cobra's default exit-1 behavior.
-				// Print to stderr first so users see the cause.
-				fmt.Fprintln(os.Stderr, "render-config.sh: configuration error (exit 70)")
-				os.Exit(70)
+			cliExit := mapRenderExitToCLI(exitErr.ExitCode())
+			switch cliExit {
+			case 70:
+				fmt.Fprintln(os.Stderr, "render-config.sh: required-input missing (exit 70)")
+			case 71:
+				fmt.Fprintln(os.Stderr, "render-config.sh: script error (exit 71)")
 			default:
-				fmt.Fprintf(os.Stderr, "render-config.sh: script error exit %d (agentpkg exit 71)\n", exitErr.ExitCode())
-				os.Exit(71)
+				fmt.Fprintf(os.Stderr, "render-config.sh: script error exit %d (agentpkg exit %d)\n", exitErr.ExitCode(), cliExit)
 			}
+			os.Exit(cliExit)
 		}
 		return fmt.Errorf("render-config.sh: %w", err)
 	}
@@ -190,6 +211,31 @@ func resolveTargetRoot(targetRoot string) string {
 		return targetRoot
 	}
 	return filepath.Join(userHomeOrTmp(), ".local")
+}
+
+// mapRenderExitToCLI translates render-config.sh's exit code into the
+// agentpkg CLI's exit code:
+//
+//	0    → 0   (success — not used here, success is signalled via nil error)
+//	1    → 70  (script bug: missing input file / manifest not found)
+//	70   → 70  (required-input missing or invalid — preserve upstream code)
+//	71   → 71  (script error: bad type, enum, parse failure)
+//	other → 71 (collapse unknown to "script error")
+//
+// The previous version collapsed all non-1 codes into 71, making
+// "required missing" indistinguishable from "type/enum error" downstream.
+// Kept as a free function so the contract is unit-tested in config_test.go.
+func mapRenderExitToCLI(scriptExitCode int) int {
+	switch scriptExitCode {
+	case 70:
+		return 70
+	case 71:
+		return 71
+	case 1:
+		return 70
+	default:
+		return 71
+	}
 }
 
 // manifest.LoadFromBytes is imported via the manifest package — keep an

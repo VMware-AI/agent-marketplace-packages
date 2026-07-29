@@ -138,6 +138,46 @@ func HandleRawIndex(s *State) http.HandlerFunc {
 	}
 }
 
+// HandleConfigSchema projects just the admin-layer config schema for one
+// (name, source, version) — only what a daemon needs to construct a
+// `config generate` payload (required_inputs + optional_inputs +
+// supported_providers). Skips payload/scripts/checksums/services/
+// upgrade/upstream that the full /manifest endpoint carries.
+//
+// The response shape mirrors ConfigSpec verbatim, wrapped under a
+// top-level "agent" envelope (so callers can identify the source version
+// without a separate /manifest call).
+func HandleConfigSchema(s *State) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if s.Index == nil {
+			writeError(w, http.StatusServiceUnavailable, "no_index", "index.json not loaded yet")
+			return
+		}
+		name := chi.URLParam(r, "name")
+		source := chi.URLParam(r, "source")
+		version := chi.URLParam(r, "version")
+		for _, a := range s.Index.Agents {
+			if a.Name != name {
+				continue
+			}
+			for _, v := range a.Versions {
+				if v.Source == source && v.Version == version {
+					writeJSON(w, http.StatusOK, map[string]any{
+						"agent":   name,
+						"source":  source,
+						"version": version,
+						"configs": v.Manifest.Configs,
+					})
+					return
+				}
+			}
+			break
+		}
+		writeError(w, http.StatusNotFound, "not_found",
+			"agent/source/version not found: "+name+"/"+source+"/"+version)
+	}
+}
+
 // findTarball looks up a single version entry across the index.
 func findTarball(s *State, name, source, version string) (apitypes.TarballRef, bool) {
 	for _, a := range s.Index.Agents {

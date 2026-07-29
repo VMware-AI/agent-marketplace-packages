@@ -69,11 +69,70 @@ type ServiceSpec struct {
 // (informational — agentpkg does not write the file itself).
 // `RenderTo` is the final on-host path (e.g. "~/.openclaw/openclaw.json").
 // `Mode` is informational; the script is responsible for chmod.
+//
+// RequiredInputs / OptionalInputs / SupportedProviders expose the
+// manifest-driven config schema so external clients (daemon, Control UI)
+// can introspect what fields each version expects. They are zero-valued
+// for schema 1.0 manifests that predate manifest 1.1's config-driven flow.
 type ConfigSpec struct {
-	Name     string `json:"name"`
-	File     string `json:"file"`
-	RenderTo string `json:"render_to"`
-	Mode     string `json:"mode"`
+	Name                 string                 `json:"name"`
+	File                 string                 `json:"file"`
+	RenderTo             string                 `json:"render_to"`
+	Mode                 string                 `json:"mode"`
+	RequiredInputs       []InputField           `json:"required_inputs,omitempty"`
+	OptionalInputs       map[string]InputField  `json:"optional_inputs,omitempty"`
+	SupportedProviders   *SupportedProviders    `json:"supported_providers,omitempty"`
+}
+
+// InputField is one input declared by the agent's manifest under either
+// required_inputs (strictly required, missing → exit 70) or
+// optional_inputs (white-listed, omitted → unset in output).
+//
+// JsonPath uses dot notation ("a.b.c") with "<name>" placeholders that
+// resolve to the OPENCLAW_PROVIDER / OPENCODE_PROVIDER / HERMES_PROVIDER
+// value at render time. Type is one of: string / integer / boolean /
+// number / enum / json_array / json_object / provider / secret_string.
+type InputField struct {
+	// InputKey is the daemon-supplied JSON key (e.g. "OPENCLAW_PROVIDER",
+	// "ANTHROPIC_API_KEY", or "<PROVIDER>_API_KEY" for dynamic resolve).
+	InputKey     string   `json:"input_key,omitempty"`
+	JsonPath     string   `json:"json_path"`
+	Type         string   `json:"type"`
+	RequiredWhen string   `json:"required_when,omitempty"`
+	// EnumValues is non-empty only when Type == "enum".
+	EnumValues   []string `json:"enum_values,omitempty"`
+	// Validate is a hint string (e.g. "in_supported_providers_or_custom").
+	Validate      string   `json:"validate,omitempty"`
+	// DynamicResolve is non-empty for synthetic API-key fields like
+	// "<PROVIDER>_API_KEY". Format: "from_<daemon-name>_provider".
+	DynamicResolve string `json:"dynamic_resolve,omitempty"`
+}
+
+// SupportedProviders exposes the catalog of built-in providers an agent
+// can be configured against, plus a hint for custom (OpenAI-compatible)
+// providers. CustomPathRequired lists the keys that must be supplied
+// when the user picks a provider id outside Builtin.
+type SupportedProviders struct {
+	Builtin []BuiltinProvider  `json:"builtin"`
+	Custom  *CustomProviderHint `json:"custom,omitempty"`
+}
+
+// BuiltinProvider is one supported built-in LLM provider.
+type BuiltinProvider struct {
+	ID        string `json:"id"`
+	APIKeyEnv string `json:"api_key_env,omitempty"`
+	// Auth is "api_key" (default) or "oauth" — only oauth providers may
+	// legitimately omit api_key_env.
+	Auth    string `json:"auth,omitempty"`
+	Notes   string `json:"notes,omitempty"`
+}
+
+// CustomProviderHint describes what extra inputs are needed to configure
+// a provider id that is not in Builtin (treated as an OpenAI-compatible
+// endpoint).
+type CustomProviderHint struct {
+	Description string `json:"description,omitempty"`
+	NPMDefault  string `json:"npm_default,omitempty"`
 }
 
 type UpstreamRef struct {

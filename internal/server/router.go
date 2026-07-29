@@ -33,6 +33,7 @@ func NewRouter(s *State, password string) http.Handler {
 			r.Get("/agents/{name}/{source}/{version}/manifest", HandleManifest(s))
 			r.Get("/agents/{name}/{source}/{version}/tarball", HandleTarball(s))
 			r.Get("/agents/{name}/{source}/{version}/sha256", HandleSHA256(s))
+			r.Get("/agents/{name}/{source}/{version}/config-schema", HandleConfigSchema(s))
 			r.Get("/index.json", HandleRawIndex(s))
 		})
 	})

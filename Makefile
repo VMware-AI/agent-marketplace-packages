@@ -2,11 +2,23 @@
 #
 # Run `make help` for a list of targets.
 
-BIN_DIR      ?= bin
-IMAGE        ?= agent-marketplace/api
-IMAGE_TAG    ?= $(shell git rev-parse --short HEAD 2>/dev/null || echo dev)
-GO          ?= go
+# Image build/push settings.
+# Same shape as agent-platform-backend's Makefile so dual-arch release
+# workflow is uniform across the two repos: VERSION is the single source of
+# truth (read from the VERSION file at the repo root), TAG is the
+# fully-rendered image tag.
+IMAGE       ?= agent-marketplace-api
+REGISTRY    ?= quay.io/vmware-ai
+PLATFORMS   ?= linux/amd64,linux/arm64
+BUILDER     ?= agent-platform-builder
+VERSION     := $(shell cat VERSION 2>/dev/null || echo dev)
+# TAG is the version-stamped tag we push alongside :latest. Override
+# from the CLI: `make release-images TAG=v0.1.0-20250729`.
+TAG  ?= $(VERSION)-$(shell date -u +%Y%m%d)
 
+
+BIN_DIR      ?= bin
+GO          ?= go
 # ---- Build ----
 .PHONY: build
 build: ## Build marketplace-api binary
@@ -27,14 +39,10 @@ lint: ## Run go vet
 	$(GO) vet ./...
 
 # ---- Container ----
-.PHONY: docker-build
-docker-build: ## Build container image
-	docker build -f deploy/docker/Dockerfile -t $(IMAGE):$(IMAGE_TAG) -t $(IMAGE):latest .
-
 .PHONY: docker-run
 docker-run: docker-build ## Build + run locally (requires .env and config/config.yaml)
 	@if [ ! -f deploy/.env ]; then \
-		cp deploy/.env.example deploy/.env; \
+		cp deploy/config/.env.example deploy/.env; \
 		echo "Created deploy/.env with placeholder password — EDIT IT"; \
 	fi
 	@if [ ! -f deploy/compose/config.yaml ]; then \
@@ -47,10 +55,31 @@ docker-run: docker-build ## Build + run locally (requires .env and config/config
 docker-stop: ## Stop local stack
 	docker compose -f deploy/compose/docker-compose.yml down
 
-.PHONY: docker-push
-docker-push: docker-build ## Push image to registry (override IMAGE for your registry)
-	docker push $(IMAGE):$(IMAGE_TAG)
-	docker push $(IMAGE):latest
+# Multi-arch build + push to $(REGISTRY). Tags the image with $(RELEASE_TAG)
+# (versioned) + :latest at every supported platform in $(PLATFORMS). Always
+# pushes — pushes are not undoable; keep prod tags deliberate.
+#
+# Notes:
+#   - Requires the docker buildx plugin (Docker 19.03+). On Apple Silicon
+#     hosts you may need to `docker buildx create --use` once.
+#   - The default Dockerfile (deploy/docker/Dockerfile) is multi-arch capable
+#     because its base images (golang:1.23-alpine, alpine:3.20) are
+#     multi-arch manifests. Dockerfile.local uses a pre-built binary and
+#     therefore needs one build per arch — switch DOCKERFILE below if you
+#     choose that path.
+#   - Override any of REGISTRY, IMAGE, TAG, PLATFORMS from the CLI.
+.PHONY: release-images
+release-images: ## Build + push multi-arch image to $(REGISTRY)
+	docker buildx create --name $(BUILDER) --use --driver docker-container 2>/dev/null || true
+	docker buildx build \
+		--builder $(BUILDER) \
+		--platform $(PLATFORMS) \
+		--tag $(REGISTRY)/$(IMAGE):$(TAG) \
+		--tag $(REGISTRY)/$(IMAGE):latest \
+		--push \
+		-f deploy/docker/Dockerfile \
+		.
+		
 
 # ---- Cleanup ----
 .PHONY: clean

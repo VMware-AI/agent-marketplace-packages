@@ -1,0 +1,34 @@
+# marketplace-api configuration example — config shipped by
+# deploy/start_marketplace_docker.sh.
+#
+# The script copies this to deploy/config.yaml on first `up`. Edit it freely;
+# the bind-mounted file is re-read by the binary on restart.
+#
+# The password value itself is NOT in this file — it lives in the
+# MARKETPLACE_API_PASSWORD env var (or deploy/.env) so the file stays
+# shareable.
+
+server:
+  # Address the container binds to. The Dockerfile EXPOSE pins 8443; this
+  # does NOT change HOST_PORT (that's the host-side switch). 0.0.0.0 accepts
+  # from any container-side source (incl. host side of port-mapping).
+  listen: "0.0.0.0:8443"
+  # TLS — auto-generated self-signed cert by start_marketplace_docker.sh when
+  # EXTERNAL_IP is set. Empty = plaintext HTTP (recommended for
+  # server-to-server deployments behind a TLS terminator like nginx/caddy).
+  tls_cert: "/etc/agent-marketplace/tls/tls.crt"
+  tls_key:  "/etc/agent-marketplace/tls/tls.key"
+
+auth:
+  # Env var name holding the password. Default: MARKETPLACE_API_PASSWORD.
+  # Set it in your shell or in deploy/.env before running `up`.
+  password_env: "MARKETPLACE_API_PASSWORD"
+
+repo:
+  # Path inside the container where the host's dist/ is bind-mounted.
+  # The script bind-mounts ${REPO_ROOT}/dist here read-only.
+  dist_dir: "/var/lib/agent-marketplace/dist"
+
+logging:
+  # debug | info | warn | error
+  level: "info"

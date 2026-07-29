@@ -287,9 +287,61 @@ func convertManifest(m *manifest.Manifest) apitypes.Manifest {
 		})
 	}
 	for _, c := range m.Configs {
-		out.Configs = append(out.Configs, apitypes.ConfigSpec{
-			Name: c.Name, File: c.File, RenderTo: c.RenderTo, Mode: c.Mode,
-		})
+		apitypesCfg := apitypes.ConfigSpec{
+			Name:     c.Name,
+			File:     c.File,
+			RenderTo: c.RenderTo,
+			Mode:     c.Mode,
+		}
+		// Project admin-layer schema so daemons can introspect what
+		// fields they need to supply for `agentpkg config generate`.
+		// Schema 1.0 manifests have nil slices/maps here; that's fine.
+		for _, ri := range c.RequiredInputs {
+			apitypesCfg.RequiredInputs = append(apitypesCfg.RequiredInputs, inputFieldToAPI(ri))
+		}
+		if len(c.OptionalInputs) > 0 {
+			apitypesCfg.OptionalInputs = make(map[string]apitypes.InputField, len(c.OptionalInputs))
+			for k, oi := range c.OptionalInputs {
+				apitypesCfg.OptionalInputs[k] = inputFieldToAPI(oi)
+			}
+		}
+		if c.SupportedProviders != nil {
+			apitypesCfg.SupportedProviders = &apitypes.SupportedProviders{}
+			for _, bp := range c.SupportedProviders.Builtin {
+				apitypesCfg.SupportedProviders.Builtin = append(apitypesCfg.SupportedProviders.Builtin, apitypes.BuiltinProvider{
+					ID:        bp.ID,
+					APIKeyEnv: bp.APIKeyEnv,
+					Auth:      bp.Auth,
+					Notes:     bp.Notes,
+				})
+			}
+			if c.SupportedProviders.Custom != nil {
+				apitypesCfg.SupportedProviders.Custom = &apitypes.CustomProviderHint{
+					Description: c.SupportedProviders.Custom.Description,
+					NPMDefault:  c.SupportedProviders.Custom.NPMDefault,
+				}
+			}
+		}
+		out.Configs = append(out.Configs, apitypesCfg)
+	}
+	return out
+}
+
+// inputFieldToAPI maps internal/manifest.InputField →
+// apitypes.InputField. Both structs use the same JSON tags so a
+// shallow copy is sufficient for the value-semantics fields; we use
+// append-slice copy for EnumValues to avoid aliasing.
+func inputFieldToAPI(in manifest.InputField) apitypes.InputField {
+	out := apitypes.InputField{
+		InputKey:       in.InputKey,
+		JsonPath:       in.JsonPath,
+		Type:           in.Type,
+		RequiredWhen:   in.RequiredWhen,
+		Validate:       in.Validate,
+		DynamicResolve: in.DynamicResolve,
+	}
+	if len(in.EnumValues) > 0 {
+		out.EnumValues = append([]string(nil), in.EnumValues...)
 	}
 	return out
 }

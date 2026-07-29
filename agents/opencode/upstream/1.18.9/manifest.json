@@ -8,10 +8,174 @@
   },
   "configs": [
     {
-      "file": "opencode.jsonc",
+      "file": "opencode.json",
       "mode": "0600",
       "name": "opencode",
-      "render_to": "~/.config/opencode/opencode.jsonc"
+      "optional_inputs": {
+        "OPENCODE_AUTOUPDATE": {
+          "enum_values": [
+            "true",
+            "false",
+            "notify"
+          ],
+          "json_path": "autoupdate",
+          "type": "enum"
+        },
+        "OPENCODE_DEFAULT_AGENT": {
+          "json_path": "default_agent",
+          "type": "string"
+        },
+        "OPENCODE_DISABLED_PROVIDERS": {
+          "json_path": "disabled_providers",
+          "type": "json_array"
+        },
+        "OPENCODE_ENABLED_PROVIDERS": {
+          "json_path": "enabled_providers",
+          "type": "json_array"
+        },
+        "OPENCODE_LOG_LEVEL": {
+          "enum_values": [
+            "DEBUG",
+            "INFO",
+            "WARN",
+            "ERROR"
+          ],
+          "json_path": "logLevel",
+          "type": "enum"
+        },
+        "OPENCODE_MODEL": {
+          "json_path": "model",
+          "type": "string"
+        },
+        "OPENCODE_PERMISSION": {
+          "json_path": "permission",
+          "type": "json_object"
+        },
+        "OPENCODE_PROVIDER_BASE_URL": {
+          "json_path": "provider.<name>.options.baseURL",
+          "required_when": "custom_provider",
+          "type": "string"
+        },
+        "OPENCODE_PROVIDER_NPM": {
+          "json_path": "provider.<name>.npm",
+          "required_when": "custom_provider",
+          "type": "string"
+        },
+        "OPENCODE_SERVER_CORS": {
+          "json_path": "server.cors",
+          "type": "json_array"
+        },
+        "OPENCODE_SERVER_HOSTNAME": {
+          "json_path": "server.hostname",
+          "type": "string"
+        },
+        "OPENCODE_SERVER_PORT": {
+          "json_path": "server.port",
+          "type": "integer"
+        },
+        "OPENCODE_SHARE": {
+          "enum_values": [
+            "manual",
+            "auto",
+            "disabled"
+          ],
+          "json_path": "share",
+          "type": "enum"
+        },
+        "OPENCODE_SMALL_MODEL": {
+          "json_path": "small_model",
+          "type": "string"
+        },
+        "OPENCODE_SNAPSHOT": {
+          "json_path": "snapshot",
+          "type": "boolean"
+        },
+        "OPENCODE_SUBAGENT_DEPTH": {
+          "json_path": "subagent_depth",
+          "type": "integer"
+        },
+        "OPENCODE_USERNAME": {
+          "json_path": "username",
+          "type": "string"
+        }
+      },
+      "render_to": "~/.config/opencode/opencode.json",
+      "required_inputs": [
+        {
+          "input_key": "OPENCODE_PROVIDER",
+          "json_path": "provider",
+          "type": "provider",
+          "validate": "in_supported_providers_or_custom"
+        },
+        {
+          "dynamic_resolve": "from_opencode_provider",
+          "input_key": "<PROVIDER>_API_KEY",
+          "json_path": "provider.<name>.options.apiKey",
+          "type": "secret_string"
+        }
+      ],
+      "supported_providers": {
+        "builtin": [
+          {
+            "api_key_env": "ANTHROPIC_API_KEY",
+            "id": "anthropic"
+          },
+          {
+            "api_key_env": "OPENAI_API_KEY",
+            "id": "openai"
+          },
+          {
+            "api_key_env": "GOOGLE_API_KEY",
+            "id": "google"
+          },
+          {
+            "api_key_env": "AWS_ACCESS_KEY_ID",
+            "id": "bedrock",
+            "notes": "Uses AWS credential chain"
+          },
+          {
+            "api_key_env": null,
+            "id": "ollama",
+            "notes": "Local; requires OPENCODE_PROVIDER_BASE_URL"
+          },
+          {
+            "api_key_env": "XAI_API_KEY",
+            "id": "xai"
+          },
+          {
+            "api_key_env": "GROQ_API_KEY",
+            "id": "groq"
+          },
+          {
+            "api_key_env": "OPENROUTER_API_KEY",
+            "id": "openrouter"
+          },
+          {
+            "api_key_env": "AZURE_API_KEY",
+            "id": "azure"
+          },
+          {
+            "api_key_env": "GITHUB_TOKEN",
+            "id": "github-copilot"
+          },
+          {
+            "api_key_env": "MISTRAL_API_KEY",
+            "id": "mistral"
+          },
+          {
+            "api_key_env": "DEEPSEEK_API_KEY",
+            "id": "deepseek"
+          },
+          {
+            "api_key_env": "COHERE_API_KEY",
+            "id": "cohere"
+          }
+        ],
+        "custom": {
+          "description": "OpenAI-compatible custom providers. Requires OPENCODE_PROVIDER_NPM and OPENCODE_PROVIDER_BASE_URL.",
+          "npm_default": "@ai-sdk/openai-compatible"
+        }
+      }
     }
   ],
   "fork_of": null,

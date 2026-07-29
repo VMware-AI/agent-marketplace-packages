@@ -2,16 +2,312 @@
   "agent": "hermes-agent",
   "channel": "stable",
   "checksums": {
-    "install.sh": "sha256:a0d1b9ccf84e0ab376353b13e1376d1474716db1f0905810b91091e7a20c8a11",
+    "install.sh": "sha256:ab3732342a9eb8d5fe0f3e482c9e65bc6c507c0c6b91f8909293538ecc8ffc69",
     "payload/hermes_agent-0.19.0-py3-none-any.whl": "sha256:bd0bac012aee38a60894781f4597dc29ee7bedb3448540249921f10d3bef327f",
     "uninstall.sh": "sha256:3de3b28f4391918db7b6f375dcdc24999bc9dee79ab4805a81988a87c7bd83d1"
   },
   "configs": [
     {
-      "file": "hermes.env",
+      "file": "config.yaml",
       "mode": "0600",
       "name": "hermes",
-      "render_to": "~/.hermes/.env"
+      "optional_inputs": {
+        "HERMESMEMORY_MEMORY_ENABLED": {
+          "json_path": "memory.memory_enabled",
+          "type": "boolean"
+        },
+        "HERMESMEMORY_USER_PROFILE_ENABLED": {
+          "json_path": "memory.user_profile_enabled",
+          "type": "boolean"
+        },
+        "HERMES_AGENT_API_MAX_RETRIES": {
+          "json_path": "agent.api_max_retries",
+          "type": "integer"
+        },
+        "HERMES_AGENT_MAX_TURNS": {
+          "json_path": "agent.max_turns",
+          "type": "integer"
+        },
+        "HERMES_AGENT_REASONING_EFFORT": {
+          "enum_values": [
+            "none",
+            "minimal",
+            "low",
+            "medium",
+            "high",
+            "xhigh",
+            "max",
+            "ultra"
+          ],
+          "json_path": "agent.reasoning_effort",
+          "type": "enum"
+        },
+        "HERMES_AGENT_TOOL_USE_ENFORCEMENT": {
+          "enum_values": [
+            "auto",
+            "true",
+            "false"
+          ],
+          "json_path": "agent.tool_use_enforcement",
+          "type": "enum"
+        },
+        "HERMES_AUX_COMPRESSION_BASE_URL": {
+          "json_path": "auxiliary.compression.base_url",
+          "type": "string"
+        },
+        "HERMES_AUX_COMPRESSION_MODEL": {
+          "json_path": "auxiliary.compression.model",
+          "type": "string"
+        },
+        "HERMES_AUX_COMPRESSION_PROVIDER": {
+          "json_path": "auxiliary.compression.provider",
+          "type": "string"
+        },
+        "HERMES_AUX_VISION_BASE_URL": {
+          "json_path": "auxiliary.vision.base_url",
+          "type": "string"
+        },
+        "HERMES_AUX_VISION_MODEL": {
+          "json_path": "auxiliary.vision.model",
+          "type": "string"
+        },
+        "HERMES_AUX_VISION_PROVIDER": {
+          "json_path": "auxiliary.vision.provider",
+          "type": "string"
+        },
+        "HERMES_COMPRESSION_ENABLED": {
+          "json_path": "compression.enabled",
+          "type": "boolean"
+        },
+        "HERMES_COMPRESSION_TARGET_RATIO": {
+          "json_path": "compression.target_ratio",
+          "type": "number"
+        },
+        "HERMES_COMPRESSION_THRESHOLD": {
+          "json_path": "compression.threshold",
+          "type": "number"
+        },
+        "HERMES_CONTEXT_LENGTH": {
+          "json_path": "model.context_length",
+          "type": "integer"
+        },
+        "HERMES_DISPLAY_LANGUAGE": {
+          "json_path": "display.language",
+          "type": "string"
+        },
+        "HERMES_MAX_TOKENS": {
+          "json_path": "model.max_tokens",
+          "type": "integer"
+        },
+        "HERMES_MODEL_BASE_URL": {
+          "json_path": "model.base_url",
+          "type": "string"
+        },
+        "HERMES_PRIVACY_REDACT_PII": {
+          "json_path": "privacy.redact_pii",
+          "type": "boolean"
+        },
+        "HERMES_PROVIDER_BASE_URL": {
+          "json_path": "providers.<name>.base_url",
+          "required_when": "custom_provider",
+          "type": "string"
+        },
+        "HERMES_PROVIDER_NPM": {
+          "json_path": "providers.<name>.npm",
+          "required_when": "custom_provider",
+          "type": "string"
+        },
+        "HERMES_STREAMING_ENABLED": {
+          "json_path": "streaming.enabled",
+          "type": "boolean"
+        },
+        "HERMES_STT_PROVIDER": {
+          "enum_values": [
+            "local",
+            "groq",
+            "openai",
+            "mistral"
+          ],
+          "json_path": "stt.provider",
+          "type": "enum"
+        },
+        "HERMES_TERMINAL_BACKEND": {
+          "enum_values": [
+            "local",
+            "docker",
+            "ssh",
+            "modal",
+            "daytona",
+            "singularity"
+          ],
+          "json_path": "terminal.backend",
+          "type": "enum"
+        },
+        "HERMES_TERMINAL_PERSISTENT": {
+          "json_path": "terminal.persistent_shell",
+          "type": "boolean"
+        },
+        "HERMES_TERMINAL_TIMEOUT": {
+          "json_path": "terminal.timeout",
+          "type": "integer"
+        },
+        "HERMES_TTS_PROVIDER": {
+          "enum_values": [
+            "edge",
+            "elevenlabs",
+            "openai",
+            "minimax",
+            "mistral",
+            "gemini",
+            "xai",
+            "neutts"
+          ],
+          "json_path": "tts.provider",
+          "type": "enum"
+        },
+        "HERMES_WORKTREE": {
+          "json_path": "worktree",
+          "type": "boolean"
+        }
+      },
+      "render_to": "~/.hermes/config.yaml",
+      "required_inputs": [
+        {
+          "input_key": "HERMES_PROVIDER",
+          "json_path": "model.provider",
+          "type": "provider",
+          "validate": "in_supported_providers_or_custom"
+        },
+        {
+          "dynamic_resolve": "from_opencode_provider",
+          "input_key": "<PROVIDER>_API_KEY",
+          "json_path": "providers.<name>.api_key_env",
+          "type": "secret_string"
+        },
+        {
+          "input_key": "HERMES_MODEL",
+          "json_path": "model.default",
+          "type": "string"
+        }
+      ],
+      "supported_providers": {
+        "builtin": [
+          {
+            "api_key_env": "ANTHROPIC_API_KEY",
+            "id": "anthropic"
+          },
+          {
+            "api_key_env": "OPENAI_API_KEY",
+            "id": "openai"
+          },
+          {
+            "api_key_env": "GEMINI_API_KEY",
+            "id": "google"
+          },
+          {
+            "api_key_env": "OPENROUTER_API_KEY",
+            "id": "openrouter"
+          },
+          {
+            "api_key_env": "XAI_API_KEY",
+            "id": "xai"
+          },
+          {
+            "api_key_env": "NVIDIA_API_KEY",
+            "id": "nvidia"
+          },
+          {
+            "api_key_env": "HERMES_API_KEY",
+            "id": "nous"
+          },
+          {
+            "api_key_env": null,
+            "auth": "oauth",
+            "id": "codex"
+          },
+          {
+            "api_key_env": null,
+            "auth": "oauth",
+            "id": "minimax-oauth"
+          },
+          {
+            "api_key_env": null,
+            "auth": "oauth",
+            "id": "xai-oauth"
+          },
+          {
+            "api_key_env": "AWS_ACCESS_KEY_ID",
+            "id": "bedrock"
+          },
+          {
+            "api_key_env": null,
+            "id": "ollama-cloud"
+          },
+          {
+            "api_key_env": "DEEPSEEK_API_KEY",
+            "id": "deepseek"
+          },
+          {
+            "api_key_env": "ZAI_API_KEY",
+            "id": "zai"
+          }
+        ],
+        "custom": {
+          "description": "OpenAI-compatible custom providers. Requires HERMES_PROVIDER_NPM and HERMES_PROVIDER_BASE_URL.",
+          "npm_default": "@ai-sdk/openai-compatible"
+        }
+      }
+    },
+    {
+      "file": ".env",
+      "mode": "0600",
+      "name": "hermes-env",
+      "optional_inputs": {
+        "HERMES_API_CALL_STALE_TIMEOUT": {
+          "key": "HERMES_API_CALL_STALE_TIMEOUT",
+          "type": "integer"
+        },
+        "HERMES_API_TIMEOUT": {
+          "key": "HERMES_API_TIMEOUT",
+          "type": "integer"
+        },
+        "HERMES_LANGUAGE": {
+          "key": "HERMES_LANGUAGE",
+          "type": "string"
+        },
+        "HERMES_OPENROUTER_CACHE": {
+          "key": "HERMES_OPENROUTER_CACHE",
+          "type": "boolean"
+        },
+        "HERMES_OPENROUTER_CACHE_TTL": {
+          "key": "HERMES_OPENROUTER_CACHE_TTL",
+          "type": "string"
+        },
+        "HERMES_QUIET": {
+          "key": "HERMES_QUIET",
+          "type": "boolean"
+        },
+        "HERMES_STREAM_READ_TIMEOUT": {
+          "key": "HERMES_STREAM_READ_TIMEOUT",
+          "type": "integer"
+        },
+        "HERMES_STREAM_STALE_TIMEOUT": {
+          "key": "HERMES_STREAM_STALE_TIMEOUT",
+          "type": "integer"
+        },
+        "HERMES_YOLO_MODE": {
+          "key": "HERMES_YOLO_MODE",
+          "type": "boolean"
+        }
+      },
+      "render_to": "~/.hermes/.env",
+      "required_inputs": [
+        {
+          "input_key": "<PROVIDER>_API_KEY",
+          "key": "<PROVIDER>_API_KEY",
+          "type": "secret_string"
+        }
+      ]
     }
   ],
   "fork_of": null,

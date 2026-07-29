@@ -31,3 +31,9 @@ config/*.local.*
 # Runtime fetch marker (created by tools/install-runtime.sh to track
 # which runtimes have been installed on this machine. Never commit.)
 **/.fetched
+
+# local env
+deploy/config/.env
+deploy/tls
+deploy/config/config.yaml
+deploy/compose/.env

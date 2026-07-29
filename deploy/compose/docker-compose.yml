@@ -1,8 +1,10 @@
 # docker-compose for marketplace-api.
 #
 # Usage:
-#   cp ../../config/marketplace-api.example.yaml ./config.yaml
-#   cp .env.example .env  # then edit .env to set MARKETPLACE_API_PASSWORD
+#   cp /path/to/config/config.yaml ../config/config.yaml  # if not already there
+#   cp ../config/.env.example ./.env  # then edit ./.env to set MARKETPLACE_API_PASSWORD
+#                                      # compose auto-loads ./.env for ${VAR} expansion
+#   EXTERNAL_IP=192.168.8.101 ./gen-tls.sh   # generate self-signed cert (one-time, or when IP changes)
 #   docker compose up
 #   docker compose restart  # after pushing new tarballs to dist/
 #
@@ -12,10 +14,7 @@
 
 services:
   marketplace-api:
-    build:
-      context: ../..
-      dockerfile: deploy/docker/Dockerfile
-    image: agent-marketplace/api:dev
+    image: quay.io/vmware-ai/agent-marketplace-api:latest
     container_name: marketplace-api
     restart: unless-stopped
     ports:
@@ -23,8 +22,12 @@ services:
     environment:
       MARKETPLACE_API_PASSWORD: "${MARKETPLACE_API_PASSWORD}"
     volumes:
-      # Config (read-only)
-      - ./config.yaml:/etc/agent-marketplace/config.yaml:ro
+      # Config (read-only) — lives in deploy/config/ alongside this compose file
+      - ../config/config.yaml:/etc/agent-marketplace/config.yaml:ro
+      # TLS cert + key (read-only). Generate self-signed with
+      # ./gen-tls.sh, or drop your own CA-signed files into
+      # deploy/tls/ to override.
+      - ../tls:/etc/agent-marketplace/tls:ro
       # dist/ contents (tarballs + sha256 + index.json) — read-only
       - ../../dist:/var/lib/agent-marketplace/dist:ro
     healthcheck:

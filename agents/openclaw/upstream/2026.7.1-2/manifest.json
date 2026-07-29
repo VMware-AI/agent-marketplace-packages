@@ -10,7 +10,192 @@
       "file": "openclaw.json",
       "mode": "0600",
       "name": "openclaw",
-      "render_to": "~/.openclaw/openclaw.json"
+      "optional_inputs": {
+        "OPENCLAW_CONTROL_UI_ALLOWED_ORIGINS": {
+          "json_path": "gateway.controlUi.allowedOrigins",
+          "type": "json_array"
+        },
+        "OPENCLAW_CONTROL_UI_BASE_PATH": {
+          "json_path": "gateway.controlUi.basePath",
+          "type": "string"
+        },
+        "OPENCLAW_CONTROL_UI_ENABLED": {
+          "json_path": "gateway.controlUi.enabled",
+          "type": "boolean"
+        },
+        "OPENCLAW_DIAGNOSTICS_ENABLED": {
+          "json_path": "diagnostics.enabled",
+          "type": "boolean"
+        },
+        "OPENCLAW_DIAGNOSTICS_OTEL_ENDPOINT": {
+          "json_path": "diagnostics.otel.endpoint",
+          "type": "string"
+        },
+        "OPENCLAW_GATEWAY_ALLOW_TAILSCALE": {
+          "json_path": "gateway.auth.allowTailscale",
+          "type": "boolean"
+        },
+        "OPENCLAW_GATEWAY_AUTH_MODE": {
+          "enum_values": [
+            "none",
+            "token",
+            "password",
+            "trusted-proxy"
+          ],
+          "json_path": "gateway.auth.mode",
+          "type": "enum"
+        },
+        "OPENCLAW_GATEWAY_BIND": {
+          "enum_values": [
+            "auto",
+            "loopback",
+            "lan",
+            "tailnet",
+            "custom"
+          ],
+          "json_path": "gateway.bind",
+          "type": "enum"
+        },
+        "OPENCLAW_GATEWAY_MODE": {
+          "enum_values": [
+            "local",
+            "remote"
+          ],
+          "json_path": "gateway.mode",
+          "type": "enum"
+        },
+        "OPENCLAW_GATEWAY_PASSWORD": {
+          "json_path": "gateway.auth.password",
+          "type": "secret_string"
+        },
+        "OPENCLAW_GATEWAY_PORT": {
+          "json_path": "gateway.port",
+          "type": "integer"
+        },
+        "OPENCLAW_GATEWAY_RELOAD_MODE": {
+          "enum_values": [
+            "hybrid",
+            "hot",
+            "restart",
+            "off"
+          ],
+          "json_path": "gateway.reload.mode",
+          "type": "enum"
+        },
+        "OPENCLAW_GATEWAY_TOKEN": {
+          "json_path": "gateway.auth.token",
+          "type": "secret_string"
+        },
+        "OPENCLAW_PROVIDER_BASE_URL": {
+          "json_path": "models.providers.<name>.baseUrl",
+          "required_when": "custom_provider",
+          "type": "string"
+        },
+        "OPENCLAW_PROVIDER_NPM": {
+          "json_path": "models.providers.<name>.localService.command",
+          "required_when": "custom_provider",
+          "type": "string"
+        },
+        "OPENCLAW_UPDATE_AUTO_ENABLED": {
+          "json_path": "update.auto.enabled",
+          "type": "boolean"
+        },
+        "OPENCLAW_UPDATE_CHANNEL": {
+          "enum_values": [
+            "stable",
+            "extended-stable",
+            "beta",
+            "dev"
+          ],
+          "json_path": "update.channel",
+          "type": "enum"
+        },
+        "OPENCLAW_UPDATE_CHECK_ON_START": {
+          "json_path": "update.checkOnStart",
+          "type": "boolean"
+        }
+      },
+      "render_to": "~/.openclaw/openclaw.json",
+      "required_inputs": [
+        {
+          "input_key": "OPENCLAW_PROVIDER",
+          "json_path": "models.providers.<name>",
+          "type": "provider",
+          "validate": "in_supported_providers_or_custom"
+        },
+        {
+          "dynamic_resolve": "from_opencode_provider",
+          "input_key": "<PROVIDER>_API_KEY",
+          "json_path": "models.providers.<name>.apiKey",
+          "type": "secret_string"
+        },
+        {
+          "input_key": "OPENCLAW_MODEL",
+          "json_path": "agents.defaults.model.primary",
+          "type": "string"
+        }
+      ],
+      "supported_providers": {
+        "builtin": [
+          {
+            "api_key_env": "ANTHROPIC_API_KEY",
+            "id": "anthropic"
+          },
+          {
+            "api_key_env": "OPENAI_API_KEY",
+            "id": "openai"
+          },
+          {
+            "api_key_env": "GEMINI_API_KEY",
+            "id": "google"
+          },
+          {
+            "api_key_env": "OPENROUTER_API_KEY",
+            "id": "openrouter"
+          },
+          {
+            "api_key_env": "XAI_API_KEY",
+            "id": "xai"
+          },
+          {
+            "api_key_env": "GROQ_API_KEY",
+            "id": "groq"
+          },
+          {
+            "api_key_env": "DEEPSEEK_API_KEY",
+            "id": "deepseek"
+          },
+          {
+            "api_key_env": "MISTRAL_API_KEY",
+            "id": "mistral"
+          },
+          {
+            "api_key_env": null,
+            "id": "ollama"
+          },
+          {
+            "api_key_env": "MINIMAX_API_KEY",
+            "id": "minimax"
+          },
+          {
+            "api_key_env": null,
+            "auth": "oauth",
+            "id": "codex"
+          },
+          {
+            "api_key_env": "AWS_ACCESS_KEY_ID",
+            "id": "bedrock"
+          },
+          {
+            "api_key_env": "OPENCLAW_API_KEY",
+            "id": "openclaw-zen"
+          }
+        ],
+        "custom": {
+          "description": "OpenAI-compatible custom providers. Requires OPENCLAW_PROVIDER_NPM and OPENCLAW_PROVIDER_BASE_URL.",
+          "npm_default": "@ai-sdk/openai-compatible"
+        }
+      }
     }
   ],
   "fork_of": null,

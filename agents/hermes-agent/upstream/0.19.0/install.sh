@@ -177,6 +177,38 @@ uv pip install \
   "hermes-agent==$VERSION" \
   || fail "uv pip install failed (wheels complete? python version match?)" 60
 
+# --- 9b. ensure PyYAML is available for render-config.sh --------------------
+# render-config.sh is invoked by `agentpkg config generate` BEFORE the venv
+# is necessarily built, so we cannot rely on $VENV_ROOT. Install PyYAML
+# into the system Python (cpython 3.12 binary that's already on PATH) so
+# the manifest-driven renderer can yaml.dump() the config.yaml output.
+# hermes-agent wheels bundle PyYAML because hermes itself depends on it; if
+# a future agent drops that dep, this step still guarantees availability.
+log "ensuring PyYAML on system python3.12 (for render-config.sh yaml output) ..."
+PYYAML_VENV=$("$VENV_ROOT/bin/python" -c "import yaml; print(yaml.__version__)" 2>&1 || true)
+PYYAML_SYS=$(python3.12 -c "import yaml; print(yaml.__version__)" 2>&1 || true)
+if [[ "$PYYAML_VENV" == *"Error"* ]] || [[ -z "$PYYAML_VENV" ]]; then
+  fail "PyYAML missing in hermes venv — bundle is corrupt (re-pack with tools/pack.sh)" 60
+fi
+log "  venv PyYAML=$PYYAML_VENV"
+if [[ "$PYYAML_SYS" == *"Error"* ]] || [[ -z "$PYYAML_SYS" ]]; then
+  # Not strictly fatal — render-config.sh can still fall back to the venv
+  # binary if it exists, but the user-host python is what gets invoked
+  # before the venv is created. Try the wheels/ PyYAML first (offline).
+  PY_WHEEL=$(ls "$WHEEL_DIR"/pyyaml-*.whl 2>/dev/null | head -1 || true)
+  if [[ -n "$PY_WHEEL" ]]; then
+    if uv pip install --python python3.12 --no-index --find-links "$WHEEL_DIR" pyyaml 2>/dev/null; then
+      ok "  system PyYAML installed from bundled wheel"
+    else
+      warn "  could not install pyyaml into system python3.12 (will retry on first config generate)"
+    fi
+  else
+    warn "  no pyyaml wheel in cache and system python3.12 lacks pyyaml"
+  fi
+else
+  ok "  system PyYAML=$PYYAML_SYS"
+fi
+
 # --- 10. symlink CLI ----------------------------------------------------------
 HERMES_BIN="$VENV_ROOT/bin/hermes"
 if [[ ! -x "$HERMES_BIN" ]]; then

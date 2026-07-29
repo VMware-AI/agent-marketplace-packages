@@ -79,12 +79,51 @@ type ServiceSpec struct {
 	Description string   `json:"description,omitempty"`
 }
 
-// ConfigSpec mirrors internal/manifest.ConfigSpec.
+// ConfigSpec mirrors internal/manifest.ConfigSpec. The RequiredInputs /
+// OptionalInputs / SupportedProviders fields expose the manifest-driven
+// config schema so external clients (daemon, Control UI) can introspect
+// what fields each version expects without parsing manifest.json.
 type ConfigSpec struct {
-	Name     string `json:"name"`
-	File     string `json:"file"`
-	RenderTo string `json:"render_to"`
-	Mode     string `json:"mode"`
+	Name               string                `json:"name"`
+	File               string                `json:"file"`
+	RenderTo           string                `json:"render_to"`
+	Mode               string                `json:"mode"`
+	RequiredInputs     []InputField          `json:"required_inputs,omitempty"`
+	OptionalInputs     map[string]InputField `json:"optional_inputs,omitempty"`
+	SupportedProviders *SupportedProviders   `json:"supported_providers,omitempty"`
+}
+
+// InputField is one input declared by an agent's manifest. See
+// internal/manifest.InputField for the field semantics.
+type InputField struct {
+	InputKey       string   `json:"input_key,omitempty"`
+	JsonPath       string   `json:"json_path"`
+	Type           string   `json:"type"`
+	RequiredWhen   string   `json:"required_when,omitempty"`
+	EnumValues     []string `json:"enum_values,omitempty"`
+	Validate       string   `json:"validate,omitempty"`
+	DynamicResolve string   `json:"dynamic_resolve,omitempty"`
+}
+
+// SupportedProviders mirrors internal/manifest.SupportedProviders.
+type SupportedProviders struct {
+	Builtin []BuiltinProvider   `json:"builtin"`
+	Custom  *CustomProviderHint `json:"custom,omitempty"`
+}
+
+// BuiltinProvider is one supported built-in LLM provider.
+type BuiltinProvider struct {
+	ID        string `json:"id"`
+	APIKeyEnv string `json:"api_key_env,omitempty"`
+	Auth      string `json:"auth,omitempty"`
+	Notes     string `json:"notes,omitempty"`
+}
+
+// CustomProviderHint describes what extra inputs are needed for a
+// provider id that is not in Builtin.
+type CustomProviderHint struct {
+	Description string `json:"description,omitempty"`
+	NPMDefault  string `json:"npm_default,omitempty"`
 }
 
 type Upstream struct {

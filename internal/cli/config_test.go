@@ -102,3 +102,83 @@ func TestExtractManifestFromTarball_NotFound(t *testing.T) {
 		t.Errorf("expected error when no manifest in tarball, got nil")
 	}
 }
+
+// TestExtractManifestBytesFromTarball_BothLayouts verifies the bytes-only
+// extractor finds manifest.json in either tarball layout. This is the
+// helper used by runConfigGenerate to stage $AGENT_MARKETPLACE_MANIFEST
+// for the manifest-driven render-config.sh.
+func TestExtractManifestBytesFromTarball_BothLayouts(t *testing.T) {
+	const want = `{"schema_version":"1.1","agent":"opencode","source":"upstream","version":"0.0.55","channel":"stable","configs":[]}`
+
+	dir := t.TempDir()
+
+	// Layout 1: nested
+	t1 := filepath.Join(dir, "nested.tar.gz")
+	if err := os.WriteFile(t1, makeTarGz(t, map[string]string{
+		"0.0.55/manifest.json": want,
+	}), 0644); err != nil {
+		t.Fatalf("write nested tarball: %v", err)
+	}
+	got1, err := extractManifestBytesFromTarball(t1, "0.0.55")
+	if err != nil {
+		t.Fatalf("nested extract: %v", err)
+	}
+	if string(got1) != want {
+		t.Errorf("nested: got %q want %q", got1, want)
+	}
+
+	// Layout 2: root
+	t2 := filepath.Join(dir, "root.tar.gz")
+	if err := os.WriteFile(t2, makeTarGz(t, map[string]string{
+		"manifest.json": want,
+	}), 0644); err != nil {
+		t.Fatalf("write root tarball: %v", err)
+	}
+	got2, err := extractManifestBytesFromTarball(t2, "0.0.55")
+	if err != nil {
+		t.Fatalf("root extract: %v", err)
+	}
+	if string(got2) != want {
+		t.Errorf("root: got %q want %q", got2, want)
+	}
+}
+
+// TestExtractManifestBytesFromTarball_NotFound verifies the error message
+// when no manifest.json is in the tarball.
+func TestExtractManifestBytesFromTarball_NotFound(t *testing.T) {
+	dir := t.TempDir()
+	tarball := filepath.Join(dir, "empty.tar.gz")
+	if err := os.WriteFile(tarball, makeTarGz(t, map[string]string{
+		"random.txt": "no manifest here",
+	}), 0644); err != nil {
+		t.Fatalf("write empty tarball: %v", err)
+	}
+	if _, err := extractManifestBytesFromTarball(tarball, "0.0.55"); err == nil {
+		t.Errorf("expected error when no manifest in tarball, got nil")
+	}
+}
+
+// TestRenderConfigExitCodeMapping documents the exit-code contract between
+// render-config.sh and agentpkg. See mapRenderExitToCLI for the full mapping.
+//
+// The previous version of runConfigGenerate's switch collapsed 70 to 71,
+// making "required missing" indistinguishable from "type/enum error".
+func TestRenderConfigExitCodeMapping(t *testing.T) {
+	cases := []struct {
+		name           string
+		scriptExitCode int
+		wantCLIExit    int
+	}{
+		{"required-missing (render exit 70)", 70, 70},
+		{"script-error (render exit 71)", 71, 71},
+		{"script-bug (render exit 1)", 1, 70},
+		{"unknown (render exit 99)", 99, 71},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := mapRenderExitToCLI(tc.scriptExitCode); got != tc.wantCLIExit {
+				t.Errorf("mapRenderExitToCLI(%d) = %d, want %d", tc.scriptExitCode, got, tc.wantCLIExit)
+			}
+		})
+	}
+}
