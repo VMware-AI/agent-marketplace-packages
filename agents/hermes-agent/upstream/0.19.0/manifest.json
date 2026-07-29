@@ -2,9 +2,9 @@
   "agent": "hermes-agent",
   "channel": "stable",
   "checksums": {
-    "install.sh": "sha256:c12211320e419a1b5a04e152ddde39de5af89bb4a2741d47c481ff41a3fee89d",
+    "install.sh": "sha256:a0d1b9ccf84e0ab376353b13e1376d1474716db1f0905810b91091e7a20c8a11",
     "payload/hermes_agent-0.19.0-py3-none-any.whl": "sha256:bd0bac012aee38a60894781f4597dc29ee7bedb3448540249921f10d3bef327f",
-    "uninstall.sh": "sha256:eee20239407e43fb448a357d33ef49ff694b317f6c6607f352ab1a6ceeed30c9"
+    "uninstall.sh": "sha256:3de3b28f4391918db7b6f375dcdc24999bc9dee79ab4805a81988a87c7bd83d1"
   },
   "configs": [
     {
@@ -17,12 +17,12 @@
   "fork_of": null,
   "payload": [
     {
-      "dst": "{{TARGET_ROOT}}/hermes-agent/0.18.2/cache/hermes_agent-0.19.0-py3-none-any.whl",
+      "dst": "{{TARGET_ROOT}}/hermes-agent/0.19.0/cache/hermes_agent-0.19.0-py3-none-any.whl",
       "mode": "0644",
       "src": "payload/hermes_agent-0.19.0-py3-none-any.whl"
     },
     {
-      "dst": "{{TARGET_ROOT}}/hermes-agent/0.18.2/cache/wheels/",
+      "dst": "{{TARGET_ROOT}}/hermes-agent/0.19.0/cache/wheels/",
       "mode": "0644",
       "src": "payload/wheels/"
     }
@@ -91,7 +91,7 @@
   ],
   "source": "upstream",
   "tarball": {
-    "filename": "hermes-agent-upstream-0.18.2.tar.gz",
+    "filename": "hermes-agent-upstream-0.19.0.tar.gz",
     "sha256": "sha256:TBD"
   },
   "upgrade": {

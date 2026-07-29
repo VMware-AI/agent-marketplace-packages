@@ -1,8 +1,8 @@
-# hermes-agent 0.18.2 (upstream)
+# hermes-agent 0.19.0 (upstream)
 
 ## About
 
-Offline-installable bundle for [`hermes-agent`](https://github.com/NousResearch/hermes-agent) `0.18.2`, sourced from the upstream PyPI package. hermes-agent is described upstream as "the self-improving AI agent — creates skills from experience, improves them during use, and runs anywhere."
+Offline-installable bundle for [`hermes-agent`](https://github.com/NousResearch/hermes-agent) `0.19.0`, sourced from the upstream PyPI package. hermes-agent is described upstream as "the self-improving AI agent — creates skills from experience, improves them during use, and runs anywhere."
 
 ## What is bundled
 
@@ -10,7 +10,7 @@ Offline-installable bundle for [`hermes-agent`](https://github.com/NousResearch/
 |---|---|---|
 | `runtime/python/` | Python 3.12.13 (`cpython-3.12.13+20260623-x86_64-unknown-linux-gnu-install_only_stripped`) | ~102 MB |
 | `runtime/uv/` | uv 0.11.28 (`uv-x86_64-unknown-linux-gnu`) | ~63 MB |
-| `payload/hermes_agent-0.18.2-py3-none-any.whl` | The upstream Python wheel itself | ~9.5 MB |
+| `payload/hermes_agent-0.19.0-py3-none-any.whl` | The upstream Python wheel itself | ~10.1 MB |
 
 ## What is NOT bundled (pulled at install time)
 
@@ -27,7 +27,7 @@ For **fully-offline** installs (no PyPI access at install time), pre-populate `p
 
 ```bash
 # On a build host with network access:
-tools/fetch.sh hermes-agent upstream 0.18.2   # downloads hermes-agent + transitive wheels
+tools/fetch.sh hermes-agent upstream 0.19.0   # downloads hermes-agent + transitive wheels
 # Then repack and ship the tarball
 ```
 
@@ -44,7 +44,7 @@ Python's TLS, sqlite, and zlib are dynamically linked against these libraries.
 ## Install
 
 ```bash
-cd agents/hermes-agent/upstream/0.18.2
+cd agents/hermes-agent/upstream/0.19.0
 ./install.sh
 ```
 
@@ -52,7 +52,7 @@ The install will:
 1. Verify the tarball's checksums
 2. Detect any prior install and run a migration if needed
 3. Deploy Python 3.12 + uv to `$HOME/.local/hermes-agent/runtime/`
-4. Create a venv at `$HOME/.local/hermes-agent/0.18.2/venv/`
+4. Create a venv at `$HOME/.local/hermes-agent/0.19.0/venv/`
 5. Install `hermes-agent` + deps via `uv pip` from the configured mirror
 6. Symlink `$HOME/.local/bin/hermes` to the venv's CLI
 7. Run `hermes --version` to verify

@@ -1,8 +1,8 @@
-# opencode 0.0.55 (upstream)
+# opencode 1.18.9 (upstream)
 
 ## About
 
-This is a 1:1 mirror of the upstream [`opencode-ai/opencode`](https://github.com/opencode-ai/opencode) `v0.0.55` release, re-packaged as an offline-installable tarball.
+This is a 1:1 mirror of the upstream [`opencode-ai/opencode`](https://github.com/opencode-ai/opencode) `v1.18.9` release, re-packaged as an offline-installable tarball.
 
 `opencode` is described upstream as "a powerful AI coding agent, built for the terminal." It's a single statically-linked Go binary — no Node, Python, or system libraries required at install time beyond the basics listed in `../..`/../docs/prerequisites.md.
 
@@ -17,7 +17,7 @@ This is a 1:1 mirror of the upstream [`opencode-ai/opencode`](https://github.com
 ## Install
 
 ```bash
-cd agents/opencode/upstream/0.0.55
+cd agents/opencode/upstream/1.18.9
 ./install.sh
 ```
 
@@ -26,7 +26,7 @@ See the contract in [`../../../docs/install-protocol.md`](../../../docs/install-
 ## Verify after install
 
 ```bash
-$HOME/.local/opencode/0.0.55/bin/opencode --version
+$HOME/.local/opencode/1.18.9/bin/opencode --version
 ```
 
 ## What `state.json` records

@@ -5,8 +5,8 @@
 # Inputs (env vars set by agentpkg):
 #   $AGENT_MARKETPLACE_CONFIG_INPUT — path to daemon's JSON file
 #   $AGENT_MARKETPLACE_AGENT        — "hermes-agent"
-#   $AGENT_MARKETPLACE_VERSION      — e.g. "0.18.2"
-#   $AGENT_MARKETPLACE_DEPLOY_ROOT  — e.g. "$HOME/.local/hermes-agent/0.18.2"
+#   $AGENT_MARKETPLACE_VERSION      — e.g. "0.19.0"
+#   $AGENT_MARKETPLACE_DEPLOY_ROOT  — e.g. "$HOME/.local/hermes-agent/0.19.0"
 #
 # Output:
 #   $HOME/.hermes/.env (mode 0600)

@@ -10,7 +10,7 @@
 set -euo pipefail
 
 AGENT="opencode"
-VERSION="0.0.55"
+VERSION="1.18.9"
 TARGET_ROOT="${AGENT_MARKETPLACE_TARGET_ROOT:-$HOME/.local}"
 STATE_FILE="$TARGET_ROOT/state/opencode.state.json"
 

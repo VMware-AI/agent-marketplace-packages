@@ -30,7 +30,7 @@ cd "$SCRIPT_DIR"
 
 AGENT="hermes-agent"
 SOURCE_TREE="upstream"
-VERSION="0.18.2"
+VERSION="0.19.0"
 TARGET_ROOT="${AGENT_MARKETPLACE_TARGET_ROOT:-$HOME/.local}"
 STATE_DIR="$TARGET_ROOT/state"
 STATE_FILE="$STATE_DIR/hermes-agent.state.json"

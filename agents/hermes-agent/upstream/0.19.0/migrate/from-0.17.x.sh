@@ -8,7 +8,7 @@
 set -euo pipefail
 
 AGENT="hermes-agent"
-VERSION="0.18.2"
+VERSION="0.19.0"
 TARGET_ROOT="${AGENT_MARKETPLACE_TARGET_ROOT:-$HOME/.local}"
 STATE_FILE="$TARGET_ROOT/state/hermes-agent.state.json"
 
