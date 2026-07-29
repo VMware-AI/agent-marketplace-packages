@@ -315,8 +315,15 @@ func asBool(v any) bool {
 // serviceSpecToUnitFile generates a systemd --user unit file body from a
 // manifest.ServiceSpec. Substitutes {{DEPLOY_ROOT}} with the absolute
 // deploy_root path. If the first token of `command` resolves to a binary
-// at `$deploy_root/bin/<token>`, that absolute path is used instead —
-// systemd --user has a minimal PATH and won't find relative binaries.
+// at one of the conventional deploy_root subpaths, that absolute path is
+// used instead — systemd --user has a minimal PATH and won't find relative
+// binaries. We probe a small list of candidate locations matching how
+// install.sh places binaries for the three known agents.
+//
+// Order of probe (first match wins):
+//   1. {{DEPLOY_ROOT}}/bin/<token>          — opencode, openclaw
+//   2. {{DEPLOY_ROOT}}/venv/bin/<token>      — hermes-agent (Python venv layout)
+//   3. As-given in the manifest              — fallback for paths the manifest already provides
 func serviceSpecToUnitFile(agent string, svc manifest.ServiceSpec, deployRoot string) string {
 	workingDir := svc.WorkingDir
 	if workingDir == "" {
@@ -326,13 +333,16 @@ func serviceSpecToUnitFile(agent string, svc manifest.ServiceSpec, deployRoot st
 
 	command := substituteSliceVars(svc.Command, map[string]string{"DEPLOY_ROOT": deployRoot})
 
-	// Resolve the first token to an absolute path if it's a relative binary
-	// that exists at $deployRoot/bin/<token>. This is the conventional layout
-	// after install.sh copies the agent's payload there.
 	if len(command) > 0 && !filepath.IsAbs(command[0]) {
-		candidate := filepath.Join(deployRoot, "bin", command[0])
-		if _, err := os.Stat(candidate); err == nil {
-			command[0] = candidate
+		candidates := []string{
+			filepath.Join(deployRoot, "bin", command[0]),
+			filepath.Join(deployRoot, "venv", "bin", command[0]),
+		}
+		for _, candidate := range candidates {
+			if _, err := os.Stat(candidate); err == nil {
+				command[0] = candidate
+				break
+			}
 		}
 	}
 
