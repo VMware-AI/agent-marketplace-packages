@@ -276,6 +276,21 @@ func convertManifest(m *manifest.Manifest) apitypes.Manifest {
 	if m.Scripts != nil {
 		out.Scripts = &apitypes.Scripts{Install: m.Scripts.Install, Uninstall: m.Scripts.Uninstall}
 	}
+	for _, s := range m.Services {
+		out.Services = append(out.Services, apitypes.ServiceSpec{
+			Name:        s.Name,
+			Command:     append([]string(nil), s.Command...),
+			Args:        append([]string(nil), s.Args...),
+			Restart:     s.Restart,
+			WorkingDir:  s.WorkingDir,
+			Description: s.Description,
+		})
+	}
+	for _, c := range m.Configs {
+		out.Configs = append(out.Configs, apitypes.ConfigSpec{
+			Name: c.Name, File: c.File, RenderTo: c.RenderTo, Mode: c.Mode,
+		})
+	}
 	return out
 }
 

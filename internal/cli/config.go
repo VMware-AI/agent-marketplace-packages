@@ -156,9 +156,13 @@ func runConfigGenerate(c *Client, name, source, channel, version, targetRoot, ca
 		if exitErr, ok := err.(*exec.ExitError); ok {
 			switch exitErr.ExitCode() {
 			case 1:
-				return fmt.Errorf("render-config.sh: configuration error (exit 70)")
+				// Use os.Exit to bypass cobra's default exit-1 behavior.
+				// Print to stderr first so users see the cause.
+				fmt.Fprintln(os.Stderr, "render-config.sh: configuration error (exit 70)")
+				os.Exit(70)
 			default:
-				return fmt.Errorf("render-config.sh: script error exit %d (agentpkg exit 71)", exitErr.ExitCode())
+				fmt.Fprintf(os.Stderr, "render-config.sh: script error exit %d (agentpkg exit 71)\n", exitErr.ExitCode())
+				os.Exit(71)
 			}
 		}
 		return fmt.Errorf("render-config.sh: %w", err)

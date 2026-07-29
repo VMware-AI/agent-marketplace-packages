@@ -6,6 +6,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/VMware-AI/agent-marketplace-packages/internal/manifest"
 	"github.com/spf13/cobra"
@@ -313,7 +314,9 @@ func asBool(v any) bool {
 
 // serviceSpecToUnitFile generates a systemd --user unit file body from a
 // manifest.ServiceSpec. Substitutes {{DEPLOY_ROOT}} with the absolute
-// deploy_root path.
+// deploy_root path. If the first token of `command` resolves to a binary
+// at `$deploy_root/bin/<token>`, that absolute path is used instead —
+// systemd --user has a minimal PATH and won't find relative binaries.
 func serviceSpecToUnitFile(agent string, svc manifest.ServiceSpec, deployRoot string) string {
 	workingDir := svc.WorkingDir
 	if workingDir == "" {
@@ -322,6 +325,16 @@ func serviceSpecToUnitFile(agent string, svc manifest.ServiceSpec, deployRoot st
 	workingDir = substituteVars(workingDir, map[string]string{"DEPLOY_ROOT": deployRoot})
 
 	command := substituteSliceVars(svc.Command, map[string]string{"DEPLOY_ROOT": deployRoot})
+
+	// Resolve the first token to an absolute path if it's a relative binary
+	// that exists at $deployRoot/bin/<token>. This is the conventional layout
+	// after install.sh copies the agent's payload there.
+	if len(command) > 0 && !filepath.IsAbs(command[0]) {
+		candidate := filepath.Join(deployRoot, "bin", command[0])
+		if _, err := os.Stat(candidate); err == nil {
+			command[0] = candidate
+		}
+	}
 
 	var args strings.Builder
 	args.WriteString("[Unit]\n")
@@ -372,16 +385,26 @@ func writeSystemdUserUnit(agent string, svc manifest.ServiceSpec, body string) (
 	return unitPath, nil
 }
 
-// enableSystemdUserUnit runs `systemctl --user enable --now <unit>`.
-// Returns true if the unit started successfully, false on soft failure
-// (systemctl --user not available on this host).
+// enableSystemdUserUnit runs `systemctl --user enable --now <unit>` then
+// polls `is-active` to confirm the unit actually started. Returns true if
+// the unit is active. Returns false on soft failure (systemctl --user
+// not available, unit failed to start, etc.).
 func enableSystemdUserUnit(unitPath string) bool {
-	out, err := exec.Command("systemctl", "--user", "enable", "--now", unitPath).CombinedOutput()
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "WARN: systemctl --user enable --now %s failed: %v (output: %s)\n", unitPath, err, string(out))
+	unitName := filepath.Base(unitPath)
+	if err := exec.Command("systemctl", "--user", "enable", "--now", unitName).Run(); err != nil {
+		fmt.Fprintf(os.Stderr, "WARN: systemctl --user enable --now %s: %v\n", unitName, err)
 		return false
 	}
-	return true
+	// enable --now returns 0 even if the service crashes on first start.
+	// Poll is-active briefly to confirm the unit actually came up.
+	for i := 0; i < 5; i++ {
+		if err := exec.Command("systemctl", "--user", "is-active", "--quiet", unitName).Run(); err == nil {
+			return true
+		}
+		time.Sleep(200 * time.Millisecond)
+	}
+	fmt.Fprintf(os.Stderr, "WARN: %s did not become active after enable --now\n", unitName)
+	return false
 }
 
 func runSystemctlUser(args ...string) error {
