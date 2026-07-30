@@ -31,7 +31,7 @@ services:
       # dist/ contents (tarballs + sha256 + index.json) — read-only
       - ../../dist:/var/lib/agent-marketplace/dist:ro
     healthcheck:
-      test: ["CMD", "wget", "-q", "-O-", "http://localhost:8443/api/v1/health"]
+      test: ["CMD", "wget", "-q", "-O-", "https://localhost:8443/api/v1/health"]
       interval: 30s
       timeout: 5s
       retries: 3
