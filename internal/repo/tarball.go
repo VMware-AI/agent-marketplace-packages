@@ -6,6 +6,7 @@ import (
 	"compress/gzip"
 	"fmt"
 	"io"
+	"path/filepath"
 )
 
 // ExtractManifestAndMeta extracts manifest.json and meta.yaml from a gzipped
@@ -29,14 +30,15 @@ func ExtractManifestAndMeta(tarballData []byte) (manifestData []byte, metaData [
 		if hdr.Typeflag != tar.TypeReg {
 			continue
 		}
-		// Match top-level manifest.json or meta.yaml only — ignore nested copies.
-		if hdr.Name == "manifest.json" || hdr.Name == "./manifest.json" {
+		// Match by basename so nested entries like "0.19.0/meta.yaml" still
+		// match. First match wins for each (root-level beats nested).
+		if filepath.Base(hdr.Name) == "manifest.json" && manifestData == nil {
 			data, err := io.ReadAll(tr)
 			if err != nil {
 				return nil, nil, fmt.Errorf("read manifest: %w", err)
 			}
 			manifestData = data
-		} else if hdr.Name == "meta.yaml" || hdr.Name == "./meta.yaml" {
+		} else if filepath.Base(hdr.Name) == "meta.yaml" && metaData == nil {
 			data, err := io.ReadAll(tr)
 			if err != nil {
 				return nil, nil, fmt.Errorf("read meta: %w", err)

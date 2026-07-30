@@ -21,13 +21,24 @@ BIN_DIR      ?= bin
 GO          ?= go
 # ---- Build ----
 .PHONY: build
-build: ## Build marketplace-api binary
+build: ## Build both binaries (marketplace-api + agentpkg) into $(BIN_DIR)
+	@mkdir -p $(BIN_DIR)
+	$(GO) build -trimpath -ldflags="-s -w" -o $(BIN_DIR)/marketplace-api ./cmd/marketplace-api
+	$(GO) build -trimpath -ldflags="-s -w" -o $(BIN_DIR)/agentpkg        ./cmd/agentpkg
+
+.PHONY: build-api
+build-api: ## Build only marketplace-api
 	@mkdir -p $(BIN_DIR)
 	$(GO) build -trimpath -ldflags="-s -w" -o $(BIN_DIR)/marketplace-api ./cmd/marketplace-api
 
+.PHONY: build-agentpkg
+build-agentpkg: ## Build only agentpkg CLI
+	@mkdir -p $(BIN_DIR)
+	$(GO) build -trimpath -ldflags="-s -w" -o $(BIN_DIR)/agentpkg ./cmd/agentpkg
+
 .PHONY: build-linux
 build-linux: ## Cross-compile marketplace-api for Linux amd64
-	GOOS=linux GOARCH=amd64 $(MAKE) build
+	GOOS=linux GOARCH=amd64 $(MAKE) build-api
 
 # ---- Test ----
 .PHONY: test
@@ -37,6 +48,19 @@ test: ## Run unit tests
 .PHONY: lint
 lint: ## Run go vet
 	$(GO) vet ./...
+
+# ---- OpenAPI ----
+# The spec lives at docs/api/openapi.json (canonical, hand-edited).
+# internal/server/openapi.json is a byte-identical copy consumed by
+# `//go:embed` — regenerate with `make openapi-embed` after editing
+# the canonical file.
+.PHONY: openapi-embed
+openapi-embed: ## Copy docs/api/openapi.json → internal/server/openapi.json for go:embed
+	cp docs/api/openapi.json internal/server/openapi.json
+
+.PHONY: openapi-check
+openapi-check: ## Validate docs/api/openapi.json matches embed copy + apitypes types + router paths
+	$(GO) run ./tools/openapi-check ./docs/api/openapi.json ./internal/server/openapi.json ./internal/apitypes
 
 # ---- Container ----
 .PHONY: docker-run

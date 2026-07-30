@@ -1,0 +1,32 @@
+[Unit]
+Description=marketplace-api (agent marketplace HTTP server)
+Documentation=https://github.com/VMware-AI/agent-marketplace-packages
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+# Adjust these paths to your install layout.
+# Defaults assume:
+#   /usr/local/bin/marketplace-api             # binary from `make build`
+#   /etc/agent-marketplace/config.yaml        # YAML config (chmod 0644)
+#   /etc/agent-marketplace/env                # EnvironmentFile (chmod 0600)
+#   /var/lib/agent-marketplace/dist           # bind-mounted dist/ (read-only)
+ExecStart=/usr/local/bin/marketplace-api --config /etc/agent-marketplace/config.yaml
+EnvironmentFile=/etc/agent-marketplace/env
+Restart=on-failure
+RestartSec=5
+# Hardening
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/log/agent-marketplace
+# Logs go to stdout/stderr by default → journald picks them up.
+# If logging.file is set in config.yaml, also append there.
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=marketplace-api
+
+[Install]
+WantedBy=multi-user.target

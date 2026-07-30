@@ -39,11 +39,11 @@ After install, see `$HOME/.local/state/opencode.state.json` for:
 ## Upgrade notes
 
 - Strategy: `replace` — the prior install is fully overwritten
-- Migrating from any `0.0.x` version invokes `migrate/from-0.0.x.sh`, which is a no-op today (no state to transform between 0.0.x releases)
-- Cross-major upgrades (when they appear) will need a new migration script under `migrate/`
+- Migrating from any prior `0.0.x` or `1.0.x` … `1.17.x` invokes the matching migration script under `migrate/` (currently a no-op — no state to transform between patch releases)
+- Cross-major upgrades will need a new migration script under `migrate/`
 
 ## Known quirks
 
-- The binary is 43 MB (still has Go runtime symbols — debug build). Upstream has not published a `--strip` artifact yet.
+- The binary is ~43 MB (still has Go runtime symbols — debug build). Upstream has not published a `--strip` artifact yet.
 - No `install-cli.sh`-style wrapper exists — `opencode` is meant to be invoked directly.
 - `--version` may print verbose multi-line output on some 0.0.x builds. We capture all of it into `INSTALLED_VERSION`.

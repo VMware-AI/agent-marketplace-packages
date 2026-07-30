@@ -1,34 +1,39 @@
-# marketplace-api configuration example — config shipped by
-# deploy/start_marketplace_docker.sh.
+# marketplace-api 配置文件示例 — 由 deploy/start_marketplace_docker.sh 首次 up 时复制生成。
 #
-# The script copies this to deploy/config.yaml on first `up`. Edit it freely;
-# the bind-mounted file is re-read by the binary on restart.
+# 该脚本会把本模板复制到 deploy/config/config.yaml（已存在则跳过）。
+# bind-mount 的文件在容器重启时会被重新读取。
 #
-# The password value itself is NOT in this file — it lives in the
-# MARKETPLACE_API_PASSWORD env var (or deploy/.env) so the file stays
-# shareable.
+# 注意：密码本身**不在**这个文件里 —— 它通过 MARKETPLACE_API_PASSWORD
+# 环境变量（或 deploy/.env）提供，使配置文件本身可以安全地加入版本控制。
 
 server:
-  # Address the container binds to. The Dockerfile EXPOSE pins 8443; this
-  # does NOT change HOST_PORT (that's the host-side switch). 0.0.0.0 accepts
-  # from any container-side source (incl. host side of port-mapping).
+  # 容器绑定的地址。Dockerfile EXPOSE 固定为 8443；此处改的是**容器内**
+  # 监听地址，对宿主端口映射（HOST_PORT）无影响。0.0.0.0 表示接受
+  # 所有来源（包括经过端口映射的宿主侧）。
   listen: "0.0.0.0:8443"
-  # TLS — auto-generated self-signed cert by start_marketplace_docker.sh when
-  # EXTERNAL_IP is set. Empty = plaintext HTTP (recommended for
-  # server-to-server deployments behind a TLS terminator like nginx/caddy).
+  # TLS — start_marketplace_docker.sh 在 EXTERNAL_IP 设置时会自动生成
+  # 自签名证书。留空 = 明文 HTTP（推荐放在 nginx/caddy 这类前置 TLS 终结器后使用）。
   tls_cert: "/etc/agent-marketplace/tls/tls.crt"
   tls_key:  "/etc/agent-marketplace/tls/tls.key"
 
 auth:
-  # Env var name holding the password. Default: MARKETPLACE_API_PASSWORD.
-  # Set it in your shell or in deploy/.env before running `up`.
+  # 保存密码的环境变量名。默认 MARKETPLACE_API_PASSWORD。
+  # 在 shell 或 deploy/.env 里设置后再执行 `up`。
   password_env: "MARKETPLACE_API_PASSWORD"
 
 repo:
-  # Path inside the container where the host's dist/ is bind-mounted.
-  # The script bind-mounts ${REPO_ROOT}/dist here read-only.
+  # 容器内 dist/ 目录的路径。脚本会把宿主 ${REPO_ROOT}/dist bind-mount 到这里（只读）。
   dist_dir: "/var/lib/agent-marketplace/dist"
 
 logging:
-  # debug | info | warn | error
+  # 日志级别过滤 —— 比此级别低的日志将被丢弃。
+  # 合法值: debug | info | warn | error
   level: "info"
+
+  # 日志格式 —— text（默认，人类可读）或 json（结构化，便于日志聚合）。
+  format: "text"
+
+  # 可选：除 stdout 之外额外追加到的日志文件路径。
+  # 留空 = 只写 stdout（容器/k8s 友好，由日志驱动统一收集）。
+  # 例子: file: "/var/log/agent-marketplace/api.log"
+  file: ""

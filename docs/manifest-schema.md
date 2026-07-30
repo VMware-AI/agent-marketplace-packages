@@ -93,7 +93,7 @@ For `source=ours`, set to:
 | `system_packages` | Names of apt/dnf packages assumed installed. **install.sh does NOT install these** — just fails loudly with exit 40 if `dpkg -l <pkg>` is empty. |
 | `system_tools` | Command names that must be on `PATH`. install.sh fails with exit 40 if any is missing. |
 
-## runtime
+## runtime (bundled runtimes inside the tarball)
 
 ```json
 "runtime": [
@@ -114,6 +114,8 @@ For `source=ours`, set to:
 | `install` | yes | Path on the target machine. Use `{{TARGET_ROOT}}` placeholder. |
 
 `runtime: []` means the agent has no bundled runtime (opencode — pure static binary).
+
+> **区别**：`runtime[]` 是「本 tarball 自带的运行时」（schema 1.0）；`runtime_constraints[]` 是「需要从系统获取的运行时版本约束」（schema 1.1+）。两者并存，互不替代。
 
 ## payload
 

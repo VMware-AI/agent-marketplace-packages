@@ -60,6 +60,18 @@ func buildIndexFromDir(outDir string) (*apitypes.Index, error) {
 				continue
 			}
 		}
+		if metaData == nil {
+			// Fallback: meta.yaml might be nested under <version>/meta.yaml
+			// (legacy layout produced by tools/pack.sh, before meta.yaml was
+			// embedded at the tarball root by the Go build pipeline). Same
+			// basename-fallback shape as the manifest.json path above.
+			metaData, err = findFileInTarball(tarPath, "meta.yaml")
+			if err != nil && !os.IsNotExist(err) {
+				fmt.Fprintf(os.Stderr, "skipping %s: meta.yaml lookup failed (%v)\n", tarName, err)
+				continue
+			}
+			// err == ErrNotExist is fine — meta.yaml is optional.
+		}
 		m, err := manifest.LoadFromBytes(manifestData)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "skipping %s: %v\n", tarName, err)
