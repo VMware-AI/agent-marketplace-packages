@@ -70,7 +70,15 @@ schema 1.1 起，`state.json` 增加 `previous`：
 }
 ```
 
+schema 1.2 起，`previous` 还记录 channel：
+
+```json
+"previous": { "version": "1.18.5", "source": "upstream", "channel": "stable" }
+```
+
 agentpkg 在升级动作发生时设置；install.sh 也可写。`uninstall.sh` 不读这个字段，但 `agentpkg uninstall` 知道 `previous` 后可以选择性保留老配置。
+
+`agentpkg rollback` 读取 `previous` 时把 `channel` 当成可选字段 —— 老的（schema 1.1）state.json 没有 `channel` 也能回滚，但 agentpkg 会用 `stable` 兜底并打 stderr 提示。
 
 ---
 
@@ -124,6 +132,8 @@ agentpkg rollback opencode --to-version 1.18.5 --to-source upstream
 
 默认目标版本 = `state.json.previous.version`；`--to-version` / `--to-source` 用于多步回滚。
 
+`--json` 在不接触 marketplace-api 的前提下打印完整回滚计划为单个 JSON 对象到 stdout，exit 0。`inverse_migration.will_run` 字段恒为 `"unknown (requires tarball inspection)"`——脚本是否真的存在需要解压 tarball 后才能确认；这是 by design，让 `--json` 真正变成零网络 / 零 IO 的预览。
+
 退出码：
 
 | 退出码 | 含义 |
@@ -139,14 +149,21 @@ agentpkg rollback opencode --to-version 1.18.5 --to-source upstream
 
 当目标版本 tarball 提供 `migrate/to-<from>.sh` 时，agentpkg 在 `install.sh` 之前执行它（仅在 rollback 路径）。
 
-文件名约定：
+文件名匹配优先级（与 `from-<old>.sh` 一致，[§ 优先级匹配迁移脚本](#优先级匹配迁移脚本)）：
+
+1. **精确匹配** `to-<from-version>.sh` —— 只对当前装的老版本生效
+2. **major.minor 通配** `to-<major>.<minor>.x.sh` —— 同 major 同 minor 的所有老版本
+3. **major 通配** `to-<major>.x.x.sh` —— 同 major 的所有老版本
+4. **fallback**：什么都不跑
+
+文件名布局：
 
 ```
 <version>/migrate/to-<from-version>.sh     # 精确匹配（tools/pack.sh 默认布局）
 migrate/to-<from-version>.sh               # 根布局 fallback
 ```
 
-`<from-version>` = **当前装在机器上的版本**（即回滚前的版本），不是要回滚到的目标。
+`<from-version>` = **当前装在机器上的版本**（即回滚前的版本），不是要回滚到的目标。`<version>` 是目标 tarball 的版本前缀（即 rollback 后要装的那个版本）。
 
 环境变量：
 

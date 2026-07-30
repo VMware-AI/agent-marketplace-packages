@@ -200,6 +200,8 @@ agentpkg rollback opencode --to-source ours         # 显式指定 source tree
 
 `--no-services` 跳过第 5 步（CI / smoke-test 场景）。
 
+`--json` 打印 rollback 计划为单个 JSON 对象到 stdout 后 exit 0；不下载、不执行任何脚本。计划包含 `current` / `target` 块、channel 解析结果、`inverse_migration.expected_script_basename`、`steps`、`note`。**注意**：计划是静态的——脚本是否实际存在需要解压 tarball 才能知道，所以 `inverse_migration.will_run` 永远是 `"unknown (requires tarball inspection)"`。编排器先 `agentpkg rollback --json` 拿计划 → 展示给用户 → 用户确认 → 编排器再去掉 `--json` 真跑。失败时 exit code 与上面表格一致。
+
 退出码：
 
 - `0` 成功

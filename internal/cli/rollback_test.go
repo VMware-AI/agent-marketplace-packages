@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"os"
@@ -32,7 +33,7 @@ func TestReadStatePrevious_OK(t *testing.T) {
 		t.Fatalf("write: %v", err)
 	}
 
-	cur, targetV, targetSrc, err := readStatePrevious("opencode", dir)
+	cur, targetV, targetSrc, targetCh, err := readStatePrevious("opencode", dir)
 	if err != nil {
 		t.Fatalf("readStatePrevious: %v", err)
 	}
@@ -44,6 +45,45 @@ func TestReadStatePrevious_OK(t *testing.T) {
 	}
 	if targetSrc != "upstream" {
 		t.Errorf("targetSource = %q, want upstream", targetSrc)
+	}
+	// state.json in this fixture does NOT carry .previous.channel —
+	// agentpkg must accept it gracefully (targetChannel == "").
+	if targetCh != "" {
+		t.Errorf("targetChannel = %q, want empty (pre-1.2 state.json)", targetCh)
+	}
+}
+
+// TestReadStatePrevious_ChannelPresent exercises the schema 1.2
+// extension where .previous also records the channel the prior version
+// was on. When present it must come back verbatim — this is what lets
+// agentpkg rollback avoid the --channel override for newer installs.
+func TestReadStatePrevious_ChannelPresent(t *testing.T) {
+	dir := t.TempDir()
+	state := map[string]any{
+		"agent":   "opencode",
+		"source":  "upstream",
+		"version": "1.19.0",
+		"channel": "beta",
+		"previous": map[string]any{
+			"version": "1.18.9",
+			"source":  "upstream",
+			"channel": "beta",
+		},
+	}
+	data, _ := json.MarshalIndent(state, "", "  ")
+	statePath := filepath.Join(dir, "state", "opencode.state.json")
+	if err := os.MkdirAll(filepath.Dir(statePath), 0755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	if err := os.WriteFile(statePath, data, 0644); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	_, _, _, targetCh, err := readStatePrevious("opencode", dir)
+	if err != nil {
+		t.Fatalf("readStatePrevious: %v", err)
+	}
+	if targetCh != "beta" {
+		t.Errorf("targetChannel = %q, want beta", targetCh)
 	}
 }
 
@@ -74,7 +114,7 @@ func TestReadStatePrevious_Missing(t *testing.T) {
 					t.Fatalf("write: %v", err)
 				}
 			}
-			_, _, _, err := readStatePrevious("opencode", d)
+			_, _, _, _, err := readStatePrevious("opencode", d)
 			if err == nil {
 				t.Fatal("expected error, got nil")
 			}
@@ -274,5 +314,212 @@ func TestExitCodeConstants(t *testing.T) {
 		if tc.got != tc.want {
 			t.Errorf("%s = %d, want %d", tc.name, tc.got, tc.want)
 		}
+	}
+}
+
+// TestResolveInverseMigration_Wildcards covers the priority scheme
+// documented in docs/upgrade-protocol.md:39-42 — exact match wins over
+// major.minor wildcard, which wins over major wildcard. Tests both the
+// nested and root layouts, plus a "no match" case.
+func TestResolveInverseMigration_Wildcards(t *testing.T) {
+	dir := t.TempDir()
+	const targetV, fromV = "1.18.5", "1.18.9"
+
+	cases := []struct {
+		name     string
+		entries  map[string]string
+		wantBase string
+		wantOK   bool
+	}{
+		{
+			name:     "exact match wins over wildcards",
+			entries:  map[string]string{"1.18.5/migrate/to-1.18.9.sh": "x", "1.18.5/migrate/to-1.18.x.sh": "x", "1.18.5/migrate/to-1.x.x.sh": "x"},
+			wantBase: "to-1.18.9.sh",
+			wantOK:   true,
+		},
+		{
+			name:     "major.minor wildcard when no exact match",
+			entries:  map[string]string{"1.18.5/migrate/to-1.18.x.sh": "x", "1.18.5/migrate/to-1.x.x.sh": "x"},
+			wantBase: "to-1.18.x.sh",
+			wantOK:   true,
+		},
+		{
+			name:     "major wildcard as last resort",
+			entries:  map[string]string{"1.18.5/migrate/to-1.x.x.sh": "x"},
+			wantBase: "to-1.x.x.sh",
+			wantOK:   true,
+		},
+		{
+			name:     "root-layout wildcard accepted",
+			entries:  map[string]string{"migrate/to-1.18.x.sh": "x"},
+			wantBase: "to-1.18.x.sh",
+			wantOK:   true,
+		},
+		{
+			name:    "no match returns false",
+			entries: map[string]string{"1.18.5/migrate/from-1.18.9.sh": "x"}, // wrong prefix
+			wantOK:  false,
+		},
+		{
+			name:    "empty tarball returns false",
+			entries: map[string]string{},
+			wantOK:  false,
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			path := filepath.Join(dir, tc.name+".tgz")
+			if err := os.WriteFile(path, makeTarGz(t, tc.entries), 0644); err != nil {
+				t.Fatal(err)
+			}
+			gotBase, gotOK := resolveInverseMigration(path, targetV, fromV)
+			if gotOK != tc.wantOK {
+				t.Errorf("matched = %v, want %v", gotOK, tc.wantOK)
+			}
+			if gotBase != tc.wantBase {
+				t.Errorf("basename = %q, want %q", gotBase, tc.wantBase)
+			}
+		})
+	}
+}
+
+// TestPlanRollbackJSON_HappyPath captures stdout, invokes planRollbackJSON
+// for a synthetic state.json, and asserts the resulting JSON shape: both
+// "current" and "target" blocks populated, channel resolved, exit code 0.
+//
+// We redirect os.Stdout via os.Pipe; the planRollbackJSON helper uses
+// fmt.Println, which writes to os.Stdout, so this is the standard
+// capture pattern in pure Go.
+func TestPlanRollbackJSON_HappyPath(t *testing.T) {
+	dir := t.TempDir()
+	state := map[string]any{
+		"agent":   "opencode",
+		"source":  "upstream",
+		"version": "1.18.9",
+		"channel": "stable",
+		"previous": map[string]any{
+			"version": "1.18.5",
+			"source":  "upstream",
+			"channel": "stable",
+		},
+	}
+	data, _ := json.MarshalIndent(state, "", "  ")
+	statePath := filepath.Join(dir, "state", "opencode.state.json")
+	if err := os.MkdirAll(filepath.Dir(statePath), 0755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	if err := os.WriteFile(statePath, data, 0644); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+
+	s := &installShared{targetRoot: dir}
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatalf("pipe: %v", err)
+	}
+	oldStdout := os.Stdout
+	os.Stdout = w
+	defer func() { os.Stdout = oldStdout }()
+
+	planErr := planRollbackJSON("opencode", s, "", "")
+	_ = w.Close()
+	if planErr != nil {
+		t.Fatalf("planRollbackJSON: %v", planErr)
+	}
+
+	var buf bytes.Buffer
+	if _, err := buf.ReadFrom(r); err != nil {
+		t.Fatalf("read pipe: %v", err)
+	}
+	out := buf.String()
+
+	var got map[string]any
+	if err := json.Unmarshal([]byte(out), &got); err != nil {
+		t.Fatalf("plan output is not valid JSON: %v\nraw: %s", err, out)
+	}
+	if got["agent"] != "opencode" {
+		t.Errorf("agent = %v, want opencode", got["agent"])
+	}
+	cur, ok := got["current"].(map[string]any)
+	if !ok {
+		t.Fatalf("current block missing or wrong type: %v", got["current"])
+	}
+	if cur["version"] != "1.18.9" || cur["source"] != "upstream" {
+		t.Errorf("current = %v, want version=1.18.9 source=upstream", cur)
+	}
+	tgt, ok := got["target"].(map[string]any)
+	if !ok {
+		t.Fatalf("target block missing or wrong type: %v", got["target"])
+	}
+	if tgt["version"] != "1.18.5" || tgt["source"] != "upstream" || tgt["channel"] != "stable" {
+		t.Errorf("target = %v, want version=1.18.5 source=upstream channel=stable", tgt)
+	}
+	im, ok := got["inverse_migration"].(map[string]any)
+	if !ok {
+		t.Fatalf("inverse_migration block missing")
+	}
+	if im["expected_script_basename"] != "to-1.18.9.sh" {
+		t.Errorf("expected_script_basename = %v, want to-1.18.9.sh", im["expected_script_basename"])
+	}
+}
+
+// TestPlanRollbackJSON_NoTarget asserts that planRollbackJSON surfaces
+// the same exit-code semantics as runRollback when state.json has no
+// usable .previous block — the orchestrator gets a typed rollbackError
+// (code 74) instead of an empty JSON object.
+func TestPlanRollbackJSON_NoTarget(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(dir, "state"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "state", "opencode.state.json"),
+		[]byte(`{"version":"1.18.9"}`), 0644); err != nil {
+		t.Fatal(err)
+	}
+	err := planRollbackJSON("opencode", &installShared{}, "", "")
+	if err == nil {
+		t.Fatal("expected error, got nil")
+	}
+	var rb *rollbackError
+	if !errors.As(err, &rb) {
+		t.Fatalf("err type %T, want *rollbackError", err)
+	}
+	if rb.code != ExitRollbackNoTarget {
+		t.Errorf("code = %d, want %d", rb.code, ExitRollbackNoTarget)
+	}
+}
+
+// TestSplitSemver pins the wildcard-candidate builder behavior. The
+// helpers downstream depend on first.two.dotted.parts being extracted
+// verbatim; non-semver inputs must be rejected so we don't try to match
+// wildcards against, e.g., "dev" or "1".
+func TestSplitSemver(t *testing.T) {
+	cases := []struct {
+		in       string
+		major    string
+		minor    string
+		ok       bool
+	}{
+		{"1.18.9", "1", "18", true},
+		{"2.0.0", "2", "0", true},
+		// Suffixes after patch are ignored; only first two dotted parts
+		// matter for wildcard resolution.
+		{"1.18.9-rc1", "1", "18", true},
+		{"10.20.30-beta.1", "10", "20", true},
+		// Edge cases — reject.
+		{"1", "", "", false},
+		{"", "", "", false},
+		{".18.9", "", "", false},
+		{"1..9", "", "", false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.in, func(t *testing.T) {
+			major, minor, ok := splitSemver(tc.in)
+			if major != tc.major || minor != tc.minor || ok != tc.ok {
+				t.Errorf("splitSemver(%q) = (%q, %q, %v), want (%q, %q, %v)",
+					tc.in, major, minor, ok, tc.major, tc.minor, tc.ok)
+			}
+		})
 	}
 }
