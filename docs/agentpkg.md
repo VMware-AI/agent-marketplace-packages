@@ -38,6 +38,7 @@ agentpkg [--config <path>] [--credentials <path>] [--version] <subcommand> [...]
 | `config generate` | 调 `render-config.sh` 渲染配置 | VM-side |
 | `install` | 安装一个 agent（含 systemd 服务） | VM-side |
 | `upgrade` | 升级已安装 agent | VM-side |
+| `rollback` | 回滚到 state.json.previous 记录的版本 | VM-side |
 | `uninstall` | 卸载 agent | VM-side |
 | `package init` | scaffold 新 agent 目录 | author-side |
 | `package verify` | 校验 manifest + 重新比对 checksum | author-side |
@@ -159,9 +160,12 @@ agentpkg install opencode --cache-dir /var/cache/agent-marketplace
 
 ```bash
 agentpkg upgrade opencode --version 1.19.0
+agentpkg upgrade opencode --version 1.19.0 --dry-run   # 打印计划，不下 tarball、不跑 install.sh
 ```
 
 同 install 流程，但 install.sh 走迁移路径（`migrate/from-<old>.sh`）。`state.json.previous` 写入老版本号。
+
+`--dry-run` 在解析完目标版本 / 缓存路径 / 期望 sha256 后打印一份人类可读的升级计划（当前版本、目标版本、目标 root、缓存路径、即将执行的步骤），随后 exit 0。它**不会**下载 tarball、**不会**扫描 tarball 看有没有迁移脚本、**不会**触碰 state.json 或 systemd。编排器拿这份输出给用户展示 → 用户确认后再调一次去掉 `--dry-run` 真正执行。
 
 ### `uninstall` —— 卸载
 
@@ -177,6 +181,34 @@ agentpkg uninstall opencode --version 1.18.9
 4. 跑 `uninstall.sh`（其内部进一步用 `installed_files` 清空 `$DEPLOY_ROOT`，并向上 rmdir 空目录直到 `$TARGET_ROOT`）
 
 幂等：状态文件缺失时直接退出 0。
+
+### `rollback` —— 回滚
+
+```bash
+agentpkg rollback opencode                          # 默认回滚到 state.json.previous.version
+agentpkg rollback opencode --to-version 1.18.5      # 多步回滚（连续升级后想直接回到 1.18.5）
+agentpkg rollback opencode --to-source ours         # 显式指定 source tree
+```
+
+执行步骤：
+
+1. 读 `$TARGET_ROOT/state/<agent>.state.json` → 取 `.previous.version` / `.previous.source`（`--to-version` / `--to-source` 显式覆盖时优先）
+2. 解析目标 tarball + 校验 sha256（命中 cache 则跳过下载）
+3. 探测目标 tarball 里的 `migrate/to-<fromVersion>.sh`（可选反向迁移脚本）；若存在，先于 install.sh 执行。**失败仅 WARN**，install.sh 仍跑
+4. 跑目标版本的 `install.sh`（它会把新 deploy_root 写出来，覆盖式替换文件；state.json 也会用新值覆盖，并写新的 `previous`）
+5. 同 install 末尾：写/更新 systemd `--user` units + 把 services / configs / config_dir 追加进 state.json
+
+`--no-services` 跳过第 5 步（CI / smoke-test 场景）。
+
+退出码：
+
+- `0` 成功
+- `74` state.json 缺失或没有 `previous` 块（无法定位回滚目标）
+- `75` 目标版本在 index 找不到 / tarball 无法解析
+- `76` 下载或 sha256 校验失败
+- inverse migration 失败 → WARN，agentpkg 仍然返回 0
+
+rollback **永不阻塞**，**不读 stdin**，**不调任何交互 prompt**；编排器只需要看 exit code + stderr。
 
 ---
 
@@ -276,6 +308,9 @@ password: <your-marketplace-api-password>
 | 70 | render-config.sh: 必填输入缺失 |
 | 71 | render-config.sh: 脚本错误 |
 | 72 | systemd --user 不可用（install 继续但服务没启动） |
+| 74 | rollback: state.json 没有 previous 块 |
+| 75 | rollback: 目标版本无法解析 |
+| 76 | rollback: 下载或 sha256 校验失败 |
 
 ---
 

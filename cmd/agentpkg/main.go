@@ -32,6 +32,7 @@ func main() {
 	root.AddCommand(cli.NewConfigCmd(&cfgPath, &credsPath))
 	root.AddCommand(cli.NewInstallCmd(&cfgPath, &credsPath))
 	root.AddCommand(cli.NewUpgradeCmd(&cfgPath, &credsPath))
+	root.AddCommand(cli.NewRollbackCmd(&cfgPath, &credsPath))
 	root.AddCommand(cli.NewUninstallCmd(&cfgPath, &credsPath))
 
 	root.AddCommand(newPackageCmd())
@@ -52,7 +53,7 @@ can fetch, verify, and install agent tarballs from a configured marketplace.
 
 Subcommand groups:
   VM install:        login, logout, whoami, index, show, download,
-                     install, upgrade, uninstall
+                     install, upgrade, rollback, uninstall
   Package authoring: package init, package verify, package build,
                      package reindex, package sign`,
 		SilenceUsage:  true,

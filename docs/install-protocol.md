@@ -10,6 +10,7 @@ Every `install.sh` in `agents/<agent>/<source>/<version>/` must follow this cont
 |----------|---------|---------|
 | `AGENT_MARKETPLACE_TARGET_ROOT` | `$HOME/.local` | Root directory install.sh writes into |
 | `AGENT_MARKETPLACE_PREVIOUS_VERSION` | empty | Set by install.sh itself when upgrading; lets migration scripts know the source version |
+| `AGENT_MARKETPLACE_TARGET_VERSION` | empty | Set by agentpkg rollback when running `migrate/to-<from>.sh`; the version being rolled back TO |
 | `AGENT_MARKETPLACE_PYPI_MIRROR` | `https://mirrors.aliyun.com/pypi/simple/` | (hermes-agent only) PyPI mirror for resolving transitive deps |
 
 ### Filesystem expectations

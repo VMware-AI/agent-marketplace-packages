@@ -1,7 +1,10 @@
 package cli
 
 import (
+	"archive/tar"
+	"compress/gzip"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -21,6 +24,7 @@ type installShared struct {
 	cacheDir    string
 	skipRun     bool // for --download-only testing
 	noServices  bool // skip systemd unit generation + start (manual control)
+	dryRun      bool // upgrade only: print the planned action without downloading or executing
 }
 
 func addInstallFlags(c *cobra.Command, s *installShared) {
@@ -31,6 +35,7 @@ func addInstallFlags(c *cobra.Command, s *installShared) {
 	c.Flags().StringVar(&s.cacheDir, "cache-dir", "", "tarball cache directory (default: $HOME/.local/share/agentpkg/cache)")
 	c.Flags().BoolVar(&s.skipRun, "download-only", false, "only download + verify; do not run install.sh")
 	c.Flags().BoolVar(&s.noServices, "no-services", false, "skip systemd unit generation + start; for manual control")
+	c.Flags().BoolVar(&s.dryRun, "dry-run", false, "(upgrade only) print the planned action without downloading or executing; exit 0")
 }
 
 // NewInstallCmd creates `agentpkg install`.
@@ -109,6 +114,68 @@ If --version is omitted, the latest installed version is removed.`,
 	return c
 }
 
+// NewRollbackCmd creates `agentpkg rollback`.
+//
+// rollback reads state.json's "previous" block (schema 1.1+) to find the
+// version that was installed before the most recent upgrade, then runs the
+// matching inverse migration (migrate/to-<from>.sh) if the target tarball
+// provides one, and finally runs the target version's install.sh — which
+// itself performs the file-level replacement. Use --to-version / --to-source
+// to roll back further than just one step.
+//
+// Failure modes (mapped to distinct exit codes so an orchestrator can
+// surface them; see internal/cli/exitcodes.go):
+//
+//   - ExitRollbackNoTarget      (74): state.json missing or has no
+//     "previous" block
+//   - ExitRollbackTargetUnknown (75): target version not in the index
+//     or tarball not resolvable
+//   - ExitRollbackDownloadFail  (76): tarball download or sha256
+//     verify failure
+//
+// rollback does NOT prompt, does NOT read stdin, and never blocks.
+func NewRollbackCmd(cfgPath, credsPath *string) *cobra.Command {
+	var s installShared
+	var (
+		toVersion string
+		toSource  string
+	)
+	c := &cobra.Command{
+		Use:   "rollback <agent> [--to-version X.Y.Z] [--to-source upstream]",
+		Short: "Revert an installed agent to its previously-recorded version",
+		Long: `rollback reads state.json's "previous" block to find the version that
+was installed before the most recent upgrade, then runs the matching inverse
+migration (migrate/to-<from>.sh) if the target tarball provides one, and
+finally runs the target version's install.sh — which itself performs the
+file-level replacement.
+
+Use --to-version / --to-source to roll back further than just one step.
+
+If no inverse migration is shipped for the target version, agentpkg proceeds
+without one (matches the manual fallback in docs/upgrade-protocol.md).
+
+If state.json is missing or has no "previous" block, rollback exits 74 so
+an orchestrator can surface the error instead of silently doing nothing.`,
+		Args: cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			name := args[0]
+			client, err := NewClient(*cfgPath, *credsPath)
+			if err != nil {
+				return err
+			}
+			return runRollback(client, name, &s, toVersion, toSource)
+		},
+	}
+	c.Flags().StringVar(&s.source, "source", "", "source tree override (default: read from state.json.previous.source)")
+	c.Flags().StringVar(&s.channel, "channel", "stable", "channel (stable | beta | dev)")
+	c.Flags().StringVar(&s.targetRoot, "target-root", "", "install root (default: $HOME/.local)")
+	c.Flags().StringVar(&s.cacheDir, "cache-dir", "", "tarball cache directory (default: $HOME/.local/share/agentpkg/cache)")
+	c.Flags().BoolVar(&s.noServices, "no-services", false, "skip systemd unit generation + start; for manual control")
+	c.Flags().StringVar(&toVersion, "to-version", "", "override the rollback target version (default: state.json.previous.version)")
+	c.Flags().StringVar(&toSource, "to-source", "", "override the rollback target source tree (default: state.json.previous.source)")
+	return c
+}
+
 // runInstall downloads + verifies + extracts + runs install.sh.
 //
 // isUpgrade is currently informational only; the install.sh contract handles
@@ -155,6 +222,19 @@ func runInstall(c *Client, name string, s *installShared, isUpgrade bool) error 
 
 	if s.skipRun {
 		fmt.Println("(skipping install.sh because --download-only)")
+		return nil
+	}
+
+	// --dry-run short-circuit. Only meaningful for upgrade (install has
+	// nothing to preview). Print the resolved plan and exit 0 without
+	// touching install.sh, systemd units, or state.json. Does NOT inspect
+	// the tarball for migration scripts — that requires extraction.
+	if isUpgrade && s.dryRun {
+		targetRoot := s.targetRoot
+		if targetRoot == "" {
+			targetRoot = filepath.Join(userHomeOrTmp(), ".local")
+		}
+		printUpgradePlan(name, version, s, targetRoot, cachePath, expectedSHA)
 		return nil
 	}
 
@@ -525,6 +605,278 @@ func runUninstall(name string, s *installShared) error {
 	)
 }
 
+// rollbackError lets runRollback signal a specific exit code without
+// leaking exit-code constants into the call chain. The caller (main.go)
+// reads the embedded code and translates it to os.Exit. Anywhere else
+// can compare to a sentinel with errors.As.
+//
+// The wrapped error (when set) is preserved via Unwrap so callers can
+// errors.Is/As against the inner cause. We don't use %w inside Sprintf
+// because newRollbackErr composes a fixed format string with an opaque
+// error argument.
+type rollbackError struct {
+	code int
+	msg  string
+	err  error
+}
+
+func (e *rollbackError) Error() string { return e.msg }
+
+func (e *rollbackError) Unwrap() error { return e.err }
+
+func (e *rollbackError) ExitCode() int { return e.code }
+
+// wrapRollbackErr attaches a code to a wrapped error. err may be nil;
+// a non-nil inner error is exposed via Unwrap.
+func wrapRollbackErr(code int, err error, format string, args ...any) error {
+	msg := fmt.Sprintf(format, args...)
+	if err != nil {
+		msg = msg + ": " + err.Error()
+	}
+	return &rollbackError{code: code, msg: msg, err: err}
+}
+
+// readStatePrevious reads the agent's state.json and returns
+// (currentVersion, targetVersion, targetSource, err). currentVersion is
+// the "version" field of the live state.json (used to name the inverse
+// migration script: migrate/to-<currentVersion>.sh). targetVersion /
+// targetSource come from .previous. Returns (..., ExitRollbackNoTarget)
+// when state.json is missing or has no usable .previous block.
+func readStatePrevious(name, targetRoot string) (currentVersion, targetVersion, targetSource string, err error) {
+	data, err := os.ReadFile(filepath.Join(targetRoot, "state", name+".state.json"))
+	if err != nil {
+		return "", "", "", wrapRollbackErr(ExitRollbackNoTarget, err,
+			"read state.json (%s) — was this agent installed via agentpkg?",
+			filepath.Join(targetRoot, "state", name+".state.json"))
+	}
+	var state map[string]any
+	if err := jsonUnmarshal(data, &state); err != nil {
+		return "", "", "", wrapRollbackErr(ExitRollbackNoTarget, err, "parse state.json")
+	}
+	currentVersion = asString(state["version"])
+	prev, ok := state["previous"].(map[string]any)
+	if !ok || prev == nil {
+		return "", "", "", wrapRollbackErr(ExitRollbackNoTarget, nil,
+			"state.json has no .previous block — cannot determine rollback target (pre-1.1 install? fresh install?)")
+	}
+	targetVersion = asString(prev["version"])
+	targetSource = asString(prev["source"])
+	if targetVersion == "" {
+		return "", "", "", wrapRollbackErr(ExitRollbackNoTarget, nil,
+			"state.json .previous.version is empty — no rollback target recorded")
+	}
+	return currentVersion, targetVersion, targetSource, nil
+}
+
+// hasMigrateToScript reports whether the target-version tarball ships
+// a migrate/to-<fromVersion>.sh inverse migration. Pure presence check —
+// does NOT execute. Tries both layouts (per docs/upgrade-protocol.md):
+//   <targetVersion>/migrate/to-<fromVersion>.sh   (canonical, tools/pack.sh)
+//   migrate/to-<fromVersion>.sh                  (root fallback)
+// Rejects false positives where a payload/ entry happens to share the
+// basename.
+func hasMigrateToScript(tarballPath, targetVersion, fromVersion string) bool {
+	candidates := []string{
+		filepath.Join(targetVersion, "migrate", "to-"+fromVersion+".sh"),
+		filepath.Join("migrate", "to-"+fromVersion+".sh"),
+	}
+	for _, want := range candidates {
+		if archiveHasMigrateTo(tarballPath, want) {
+			return true
+		}
+	}
+	return false
+}
+
+// archiveHasMigrateTo returns true if the tarball has a path whose dir
+// is "migrate/" and whose basename is "to-<fromVersion>.sh". This is
+// stricter than runTarContains (basename-only) and protects against
+// false positives from unrelated tarball entries.
+func archiveHasMigrateTo(tarballPath, wantPath string) bool {
+	f, err := os.Open(tarballPath)
+	if err != nil {
+		return false
+	}
+	defer f.Close()
+	gz, err := gzip.NewReader(f)
+	if err != nil {
+		return false
+	}
+	defer gz.Close()
+	tr := tar.NewReader(gz)
+	for {
+		hdr, err := tr.Next()
+		if err == io.EOF {
+			return false
+		}
+		if err != nil {
+			return false
+		}
+		if hdr.Typeflag != tar.TypeReg {
+			continue
+		}
+		if hdr.Name == wantPath {
+			return true
+		}
+		// Also accept any "<prefix>/migrate/to-<X>.sh" form.
+		dir, base := filepath.Split(hdr.Name)
+		if filepath.Base(filepath.Clean(dir)) == "migrate" && base == "to-"+filepath.Base(wantPath) {
+			return true
+		}
+	}
+}
+
+// extractMigrateToScript pulls migrate/to-<fromVersion>.sh out of a
+// cached tarball. Tries <targetVersion>/migrate/to-<fromVersion>.sh
+// first (the canonical tools/pack.sh layout), then migrate/to-<...>.sh
+// at the root for tarballs that don't nest under the version segment.
+// The extracted script is written to destDir and made executable.
+func extractMigrateToScript(tarballPath, targetVersion, fromVersion, destDir string) (string, error) {
+	candidates := []string{
+		filepath.Join(targetVersion, "migrate", "to-"+fromVersion+".sh"),
+		filepath.Join("migrate", "to-"+fromVersion+".sh"),
+	}
+	out := filepath.Join(destDir, "to-"+fromVersion+".sh")
+	for _, name := range candidates {
+		if err := runTarExtractTo(tarballPath, name, out); err == nil {
+			if err := os.Chmod(out, 0755); err != nil {
+				return "", fmt.Errorf("chmod: %w", err)
+			}
+			return out, nil
+		}
+	}
+	return "", fmt.Errorf("to-%s.sh not found in tarball (tried: %v)", fromVersion, candidates)
+}
+
+// runInverseMigration runs the optional migrate/to-<fromVersion>.sh from
+// the cached target tarball. On any failure prints WARN and returns nil
+// (mirrors the from-<old>.sh contract — non-fatal per
+// docs/upgrade-protocol.md:52). Returns nil when the script is absent.
+func runInverseMigration(tarballPath, targetVersion, fromVersion, targetRoot, currentDeployRoot string) error {
+	if !hasMigrateToScript(tarballPath, targetVersion, fromVersion) {
+		fmt.Fprintf(os.Stderr, "WARN: no migrate/to-%s.sh in target tarball — skipping inverse migration\n", fromVersion)
+		return nil
+	}
+	tmp, err := os.MkdirTemp("", "agentpkg-rollback-mig-")
+	if err != nil {
+		return fmt.Errorf("mktemp: %w", err)
+	}
+	defer os.RemoveAll(tmp)
+	// Use the same dual-layout extraction as the other script helpers.
+	if _, err := extractMigrateToScript(tarballPath, targetVersion, fromVersion, tmp); err != nil {
+		fmt.Fprintf(os.Stderr, "WARN: extract migrate/to-%s.sh: %v\n", fromVersion, err)
+		return nil
+	}
+	scriptPath := filepath.Join(tmp, "to-"+fromVersion+".sh")
+	fmt.Printf("Running inverse migration %s...\n", filepath.Base(scriptPath))
+	env := []string{
+		"AGENT_MARKETPLACE_TARGET_ROOT=" + targetRoot,
+		"AGENT_MARKETPLACE_TARGET_VERSION=" + targetVersion,
+		"AGENT_MARKETPLACE_DEPLOY_ROOT=" + currentDeployRoot,
+	}
+	if err := execScript(scriptPath, env); err != nil {
+		fmt.Fprintf(os.Stderr, "WARN: inverse migration %s failed: %v — continuing with install.sh\n", scriptPath, err)
+		return nil
+	}
+	return nil
+}
+
+// runRollback is the driver behind `agentpkg rollback`. See
+// NewRollbackCmd for the contract.
+func runRollback(c *Client, name string, s *installShared, toVersion, toSource string) error {
+	targetRoot := s.targetRoot
+	if targetRoot == "" {
+		targetRoot = filepath.Join(userHomeOrTmp(), ".local")
+	}
+
+	// 1. Read state.json and resolve target.
+	currentVersion, targetV, targetSrc, err := readStatePrevious(name, targetRoot)
+	if err != nil {
+		return err
+	}
+	if toVersion != "" {
+		targetV = toVersion
+	}
+	if toSource != "" {
+		targetSrc = toSource
+	}
+	if targetV == "" || targetSrc == "" {
+		return wrapRollbackErr(ExitRollbackNoTarget, nil,
+			"rollback target not fully resolved: version=%q source=%q", targetV, targetSrc)
+	}
+
+	// 2. Default --source / --channel if not set on CLI.
+	if s.source == "" {
+		s.source = targetSrc
+	}
+	if s.channel == "" {
+		s.channel = "stable"
+	}
+
+	// 3. Resolve the target tarball.
+	tarName, expectedSHA, err := resolveTarball(c, name, s.source, s.channel, targetV)
+	if err != nil {
+		return wrapRollbackErr(ExitRollbackTargetUnknown, err,
+			"resolve target tarball %s/%s/%s/%s",
+			name, s.source, s.channel, targetV)
+	}
+
+	// 4. Cache / download the target tarball.
+	cacheDir := s.cacheDir
+	if cacheDir == "" {
+		cacheDir = filepath.Join(userHomeOrTmp(), ".local", "share", "agentpkg", "cache")
+	}
+	if err := os.MkdirAll(cacheDir, 0755); err != nil {
+		return wrapRollbackErr(ExitRollbackDownloadFail, err, "mkdir cache")
+	}
+	cachePath := filepath.Join(cacheDir, tarName)
+	if !needsDownload(cachePath, expectedSHA) {
+		fmt.Printf("Using cached %s\n", cachePath)
+	} else {
+		if err := downloadAndVerify(c, name, s.source, s.channel, targetV, tarName, expectedSHA, cachePath); err != nil {
+			return wrapRollbackErr(ExitRollbackDownloadFail, err, "download")
+		}
+		fmt.Printf("Downloaded %s -> %s\n", tarName, cachePath)
+	}
+
+	// 5. Optional inverse migration. The "from" version is the one we
+	//    are rolling back FROM (currentVersion); the "target" version
+	//    is the one we're installing. The script is looked up inside the
+	//    target tarball at <targetVersion>/migrate/to-<fromVersion>.sh.
+	//    If currentVersion is empty (e.g. never had one recorded),
+	//    skip this step entirely.
+	if currentVersion != "" {
+		currentDeployRoot := filepath.Join(targetRoot, name, currentVersion)
+		if err := runInverseMigration(cachePath, targetV, currentVersion, targetRoot, currentDeployRoot); err != nil {
+			// runInverseMigration already prints WARN; we only get an
+			// error here for mktemp failures etc. — bubble it up.
+			return err
+		}
+	} else {
+		fmt.Fprintf(os.Stderr, "WARN: no current version recorded in state.json — skipping inverse migration\n")
+	}
+
+	// 6. Run target install.sh. This is the actual file replacement; it
+	//    also rewrites state.json with the new version and a fresh
+	//    .previous pointing at currentVersion (so a subsequent rollback
+	//    can come back here).
+	if err := runInstallScript(cachePath, targetRoot, targetV, true); err != nil {
+		return fmt.Errorf("install.sh (rollback target %s): %w", targetV, err)
+	}
+
+	// 7. Post-install. Soft-warn on failure (same policy as runInstall).
+	if err := postInstall(name, targetV, targetRoot, cachePath, s.noServices); err != nil {
+		fmt.Fprintf(os.Stderr, "WARN: post-install steps failed: %v\n", err)
+	}
+
+	from := currentVersion
+	if from == "" {
+		from = "(none)"
+	}
+	fmt.Printf("Rolled back %s: %s -> %s\n", name, from, targetV)
+	return nil
+}
+
 // disableSystemdUserUnit runs `systemctl --user disable --now <unit>`.
 // Best-effort: soft-fail if systemctl --user is unavailable.
 func disableSystemdUserUnit(unitPath string) error {
@@ -667,6 +1019,55 @@ func execScript(path string, env []string) error {
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 	return cmd.Run()
+}
+
+// printUpgradePlan writes the human-readable upgrade plan to stdout.
+// Called from runInstall only when --dry-run + isUpgrade. Output is the
+// single source of truth that orchestrators (or a human operator) read
+// before deciding to re-run without --dry-run.
+func printUpgradePlan(name, version string, s *installShared, targetRoot, cachePath, expectedSHA string) {
+	current := readInstalledVersion(name, targetRoot)
+	steps := []string{
+		"[1] extract tarball to temp dir, locate install.sh",
+		"[2] install.sh runs (it reads state.json and decides whether to run a migration script)",
+		"[3] write/update systemd --user units (skipped with --no-services)",
+		"[4] append services/configs/config_dir to state.json",
+	}
+	fmt.Printf("(dry-run) Upgrade plan for: %s\n", name)
+	if current != "" {
+		fmt.Printf("  current:        %s (per state.json)\n", current)
+	} else {
+		fmt.Printf("  current:        (no prior install detected — install.sh will treat this as a fresh install)\n")
+	}
+	fmt.Printf("  target:         %s\n", version)
+	fmt.Printf("  source:         %s\n", s.source)
+	fmt.Printf("  channel:        %s\n", s.channel)
+	fmt.Printf("  target root:    %s\n", targetRoot)
+	fmt.Printf("  cache:          %s\n", cachePath)
+	fmt.Printf("  expected sha:   %s\n", expectedSHA)
+	fmt.Printf("  steps:\n")
+	for _, step := range steps {
+		fmt.Printf("    %s\n", step)
+	}
+	fmt.Printf("  note: --dry-run does NOT inspect the tarball for migration scripts.\n")
+	fmt.Printf("        re-run without --dry-run to actually execute.\n")
+}
+
+// readInstalledVersion returns the version field from the agent's
+// state.json, or "" if state.json is missing/unparseable. Used by
+// --dry-run to surface "what's currently there" in the plan. Does not
+// error — a missing state.json means "fresh install", which the plan
+// already handles.
+func readInstalledVersion(name, targetRoot string) string {
+	data, err := os.ReadFile(filepath.Join(targetRoot, "state", name+".state.json"))
+	if err != nil {
+		return ""
+	}
+	var state map[string]any
+	if err := jsonUnmarshal(data, &state); err != nil {
+		return ""
+	}
+	return asString(state["version"])
 }
 
 // pickLatestStable queries the index for the highest-version stable entry.

@@ -38,6 +38,39 @@ func runTarExtract(tarballPath, fileName, destDir string) error {
 	return runTarExtractTo(tarballPath, fileName, destDir+"/"+fileName)
 }
 
+// runTarContains reports whether a regular file with the given basename
+// exists anywhere inside the tarball. Streams the archive; does not write
+// anything to disk. Used by dry-run flows that need a presence check
+// without paying for a full extraction.
+func runTarContains(tarballPath, fileName string) bool {
+	f, err := os.Open(tarballPath)
+	if err != nil {
+		return false
+	}
+	defer f.Close()
+	gz, err := gzip.NewReader(f)
+	if err != nil {
+		return false
+	}
+	defer gz.Close()
+	tr := tar.NewReader(gz)
+	for {
+		hdr, err := tr.Next()
+		if err == io.EOF {
+			return false
+		}
+		if err != nil {
+			return false
+		}
+		if hdr.Typeflag != tar.TypeReg {
+			continue
+		}
+		if filepath.Base(hdr.Name) == fileName {
+			return true
+		}
+	}
+}
+
 // runTarExtractTo is like runTarExtract but lets the caller specify the
 // final output path explicitly (so the script's archived location can
 // differ from where execScript expects to find it).
