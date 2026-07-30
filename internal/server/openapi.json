@@ -1,0 +1,459 @@
+{
+  "openapi": "3.0.3",
+  "info": {
+    "title": "marketplace-api",
+    "version": "0.1.0",
+    "description": "Read-only HTTP server that exposes a dist/ directory of agent tarballs as a JSON + tarball API. Auth is HTTP Basic Auth on every endpoint except /api/v1/health (which is anonymous by design so that Docker / k8s healthchecks do not need credentials)."
+  },
+  "servers": [
+    {
+      "url": "https://{host}:8443",
+      "variables": {
+        "host": { "default": "localhost", "description": "Hostname or IP of the marketplace-api instance." }
+      }
+    }
+  ],
+  "tags": [
+    { "name": "health", "description": "Liveness probe — anonymous." },
+    { "name": "index", "description": "Discovery — list agents and versions." },
+    { "name": "agents", "description": "Per-agent detail." },
+    { "name": "artifacts", "description": "Tarball bytes, sha256 sidecar, config schema." },
+    { "name": "docs", "description": "This OpenAPI spec + Swagger UI." }
+  ],
+  "components": {
+    "securitySchemes": {
+      "basicAuth": {
+        "type": "http",
+        "scheme": "basic",
+        "description": "HTTP Basic Auth. Username is informational; only the password is validated against the value of the env var named by auth.password_env (default MARKETPLACE_API_PASSWORD)."
+      }
+    },
+    "schemas": {
+      "Error": {
+        "type": "object",
+        "required": ["error"],
+        "properties": {
+          "error": {
+            "type": "object",
+            "required": ["code", "message"],
+            "properties": {
+              "code": { "type": "string", "example": "not_found" },
+              "message": { "type": "string" },
+              "details": { "type": "object", "additionalProperties": true }
+            }
+          }
+        }
+      },
+      "IndexStripped": {
+        "type": "object",
+        "properties": {
+          "generated_at": { "type": "string" },
+          "schema_version": { "type": "string" },
+          "agents": { "type": "array", "items": { "$ref": "#/components/schemas/AgentStripped" } }
+        }
+      },
+      "AgentStripped": {
+        "type": "object",
+        "properties": {
+          "name": { "type": "string" },
+          "display_name": { "type": "string" },
+          "description": { "type": "string" },
+          "icon": { "type": "string" },
+          "category": { "type": "string" },
+          "tags": { "type": "array", "items": { "type": "string" } },
+          "versions": { "type": "array", "items": { "$ref": "#/components/schemas/VersionStripped" } }
+        }
+      },
+      "VersionStripped": {
+        "type": "object",
+        "properties": {
+          "version": { "type": "string" },
+          "source": { "type": "string", "enum": ["upstream", "ours"] },
+          "channel": { "type": "string", "enum": ["stable", "beta", "edge", "internal"] },
+          "released_at": { "type": "string" },
+          "tarball": { "$ref": "#/components/schemas/Tarball" }
+        }
+      },
+      "Tarball": {
+        "type": "object",
+        "properties": {
+          "filename": { "type": "string" },
+          "size_bytes": { "type": "integer", "format": "int64" },
+          "sha256": { "type": "string", "description": "Format: sha256:<hex>", "example": "sha256:fc78..." }
+        }
+      },
+      "Agent": {
+        "type": "object",
+        "properties": {
+          "name": { "type": "string" },
+          "display_name": { "type": "string" },
+          "description": { "type": "string" },
+          "icon": { "type": "string" },
+          "category": { "type": "string" },
+          "tags": { "type": "array", "items": { "type": "string" } },
+          "versions": { "type": "array", "items": { "$ref": "#/components/schemas/Version" } }
+        }
+      },
+      "Version": {
+        "type": "object",
+        "properties": {
+          "version": { "type": "string" },
+          "source": { "type": "string" },
+          "channel": { "type": "string" },
+          "released_at": { "type": "string" },
+          "tarball": { "$ref": "#/components/schemas/Tarball" },
+          "manifest": { "$ref": "#/components/schemas/Manifest" }
+        }
+      },
+      "Manifest": {
+        "type": "object",
+        "properties": {
+          "schema_version": { "type": "string" },
+          "agent": { "type": "string" },
+          "source": { "type": "string" },
+          "version": { "type": "string" },
+          "channel": { "type": "string" },
+          "released_at": { "type": "string" },
+          "upstream": { "$ref": "#/components/schemas/Upstream" },
+          "fork_of": { "$ref": "#/components/schemas/ForkOf" },
+          "requires": { "$ref": "#/components/schemas/Requires" },
+          "runtime_constraints": { "type": "array", "items": { "$ref": "#/components/schemas/RuntimeConstraint" } },
+          "payload": { "type": "array", "items": { "$ref": "#/components/schemas/PayloadEntry" } },
+          "checksums": { "type": "object", "additionalProperties": { "type": "string" } },
+          "tarball": { "$ref": "#/components/schemas/TarballRef" },
+          "upgrade": { "$ref": "#/components/schemas/Upgrade" },
+          "scripts": { "$ref": "#/components/schemas/Scripts" },
+          "services": { "type": "array", "items": { "$ref": "#/components/schemas/ServiceSpec" } },
+          "configs": { "type": "array", "items": { "$ref": "#/components/schemas/ConfigSpec" } }
+        }
+      },
+      "Upstream": {
+        "type": "object",
+        "properties": {
+          "name": { "type": "string" },
+          "version": { "type": "string" },
+          "url": { "type": "string", "format": "uri" },
+          "sha256": { "type": "string" },
+          "notes": { "type": "string" }
+        }
+      },
+      "ForkOf": {
+        "type": "object",
+        "properties": {
+          "agent": { "type": "string" },
+          "version": { "type": "string" },
+          "source": { "type": "string" }
+        }
+      },
+      "Requires": {
+        "type": "object",
+        "properties": {
+          "os": { "type": "array", "items": { "type": "string" } },
+          "arch": { "type": "array", "items": { "type": "string" } },
+          "system_packages": { "type": "array", "items": { "type": "string" } },
+          "system_tools": { "type": "array", "items": { "type": "string" } }
+        }
+      },
+      "RuntimeConstraint": {
+        "type": "object",
+        "properties": {
+          "name": { "type": "string" },
+          "min_version": { "type": "string" },
+          "max_version": { "type": "string" },
+          "use_system": { "type": "boolean" }
+        }
+      },
+      "PayloadEntry": {
+        "type": "object",
+        "properties": {
+          "src": { "type": "string" },
+          "dst": { "type": "string" },
+          "mode": { "type": "string" }
+        }
+      },
+      "TarballRef": {
+        "type": "object",
+        "properties": {
+          "filename": { "type": "string" },
+          "sha256": { "type": "string" }
+        }
+      },
+      "Upgrade": {
+        "type": "object",
+        "properties": {
+          "strategy": { "type": "string" },
+          "compatible_from": { "type": "array", "items": { "type": "string" } },
+          "migrations": { "type": "array", "items": { "$ref": "#/components/schemas/MigrationEntry" } }
+        }
+      },
+      "MigrationEntry": {
+        "type": "object",
+        "properties": {
+          "from": { "type": "string" },
+          "script": { "type": "string" }
+        }
+      },
+      "Scripts": {
+        "type": "object",
+        "properties": {
+          "install": { "type": "string" },
+          "uninstall": { "type": "string" }
+        }
+      },
+      "ServiceSpec": {
+        "type": "object",
+        "properties": {
+          "name": { "type": "string" },
+          "command": { "type": "array", "items": { "type": "string" } },
+          "args": { "type": "array", "items": { "type": "string" } },
+          "restart": { "type": "string", "enum": ["no", "on-failure", "always"] },
+          "working_dir": { "type": "string" },
+          "description": { "type": "string" }
+        }
+      },
+      "ConfigSpec": {
+        "type": "object",
+        "properties": {
+          "name": { "type": "string" },
+          "file": { "type": "string" },
+          "render_to": { "type": "string" },
+          "mode": { "type": "string" },
+          "required_inputs": { "type": "array", "items": { "$ref": "#/components/schemas/InputField" } },
+          "optional_inputs": { "type": "object", "additionalProperties": { "$ref": "#/components/schemas/InputField" } },
+          "supported_providers": { "$ref": "#/components/schemas/SupportedProviders" }
+        }
+      },
+      "InputField": {
+        "type": "object",
+        "properties": {
+          "input_key": { "type": "string" },
+          "json_path": { "type": "string" },
+          "type": { "type": "string" },
+          "required_when": { "type": "string" },
+          "enum_values": { "type": "array", "items": { "type": "string" } },
+          "validate": { "type": "string" },
+          "dynamic_resolve": { "type": "string" }
+        }
+      },
+      "SupportedProviders": {
+        "type": "object",
+        "properties": {
+          "builtin": { "type": "array", "items": { "$ref": "#/components/schemas/BuiltinProvider" } },
+          "custom": { "$ref": "#/components/schemas/CustomProviderHint" }
+        }
+      },
+      "BuiltinProvider": {
+        "type": "object",
+        "properties": {
+          "id": { "type": "string" },
+          "api_key_env": { "type": "string" },
+          "auth": { "type": "string" },
+          "notes": { "type": "string" }
+        }
+      },
+      "CustomProviderHint": {
+        "type": "object",
+        "properties": {
+          "description": { "type": "string" },
+          "npm_default": { "type": "string" }
+        }
+      }
+    }
+  },
+  "security": [{ "basicAuth": [] }],
+  "paths": {
+    "/api/v1/health": {
+      "get": {
+        "tags": ["health"],
+        "summary": "Liveness probe",
+        "description": "Anonymous — does not require auth. Returns 200 OK as long as the process is up and the dist/ index has loaded.",
+        "security": [],
+        "responses": {
+          "200": {
+            "description": "Server is alive.",
+            "content": { "application/json": { "schema": { "type": "object", "required": ["status","version"], "properties": { "status": {"type":"string","enum":["ok"]}, "version": {"type":"string"} } } } }
+          }
+        }
+      }
+    },
+    "/api/v1/index": {
+      "get": {
+        "tags": ["index"],
+        "summary": "List all agents and versions (manifests stripped).",
+        "responses": {
+          "200": {
+            "description": "OK.",
+            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/IndexStripped" } } }
+          },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "503": { "$ref": "#/components/responses/ServiceUnavailable" }
+        }
+      }
+    },
+    "/api/v1/agents/{name}": {
+      "get": {
+        "tags": ["agents"],
+        "summary": "Get one agent (all versions, full manifests).",
+        "parameters": [{ "$ref": "#/components/parameters/AgentName" }],
+        "responses": {
+          "200": {
+            "description": "OK.",
+            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Agent" } } }
+          },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "404": { "$ref": "#/components/responses/NotFound" }
+        }
+      }
+    },
+    "/api/v1/agents/{name}/{source}/{version}/manifest": {
+      "get": {
+        "tags": ["agents"],
+        "summary": "Get the full technical manifest.json for one (name, source, version).",
+        "parameters": [
+          { "$ref": "#/components/parameters/AgentName" },
+          { "$ref": "#/components/parameters/Source" },
+          { "$ref": "#/components/parameters/Version" }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK.",
+            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Manifest" } } }
+          },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "404": { "$ref": "#/components/responses/NotFound" }
+        }
+      }
+    },
+    "/api/v1/agents/{name}/{source}/{version}/tarball": {
+      "get": {
+        "tags": ["artifacts"],
+        "summary": "Stream the tarball bytes (application/gzip).",
+        "parameters": [
+          { "$ref": "#/components/parameters/AgentName" },
+          { "$ref": "#/components/parameters/Source" },
+          { "$ref": "#/components/parameters/Version" }
+        ],
+        "responses": {
+          "200": {
+            "description": "Tarball bytes.",
+            "content": { "application/gzip": { "schema": { "type": "string", "format": "binary" } } }
+          },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "404": { "$ref": "#/components/responses/NotFound" }
+        }
+      }
+    },
+    "/api/v1/agents/{name}/{source}/{version}/sha256": {
+      "get": {
+        "tags": ["artifacts"],
+        "summary": "Get the sha256 sidecar (sha256sum-format text/plain).",
+        "parameters": [
+          { "$ref": "#/components/parameters/AgentName" },
+          { "$ref": "#/components/parameters/Source" },
+          { "$ref": "#/components/parameters/Version" }
+        ],
+        "responses": {
+          "200": {
+            "description": "sha256 sidecar text.",
+            "content": { "text/plain": { "schema": { "type": "string", "example": "fc78...  opencode-upstream-1.18.9.tar.gz\n" } } }
+          },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "404": { "$ref": "#/components/responses/NotFound" }
+        }
+      }
+    },
+    "/api/v1/agents/{name}/{source}/{version}/config-schema": {
+      "get": {
+        "tags": ["artifacts"],
+        "summary": "Get the admin-layer config schema for one version (required/optional inputs + supported LLM providers).",
+        "parameters": [
+          { "$ref": "#/components/parameters/AgentName" },
+          { "$ref": "#/components/parameters/Source" },
+          { "$ref": "#/components/parameters/Version" }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK.",
+            "content": { "application/json": { "schema": { "type": "object", "properties": { "agent": {"type":"string"}, "source": {"type":"string"}, "version": {"type":"string"}, "configs": {"type":"array","items":{"$ref":"#/components/schemas/ConfigSpec"}} } } } }
+          },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "404": { "$ref": "#/components/responses/NotFound" }
+        }
+      }
+    },
+    "/api/v1/index.json": {
+      "get": {
+        "tags": ["index"],
+        "summary": "Raw dist/index.json (debug). Includes the full per-version manifest payload.",
+        "responses": {
+          "200": {
+            "description": "OK.",
+            "content": { "application/json": { "schema": { "type": "object" } } }
+          },
+          "401": { "$ref": "#/components/responses/Unauthorized" },
+          "503": { "$ref": "#/components/responses/ServiceUnavailable" }
+        }
+      }
+    },
+    "/swagger": {
+      "get": {
+        "tags": ["docs"],
+        "summary": "Swagger UI HTML.",
+        "security": [],
+        "responses": {
+          "200": {
+            "description": "HTML.",
+            "content": { "text/html": { "schema": { "type": "string" } } }
+          }
+        }
+      }
+    },
+    "/swagger/openapi.json": {
+      "get": {
+        "tags": ["docs"],
+        "summary": "Raw OpenAPI 3.0.3 spec.",
+        "security": [],
+        "responses": {
+          "200": {
+            "description": "OK.",
+            "content": { "application/json": { "schema": { "type": "object" } } }
+          }
+        }
+      }
+    }
+  },
+  "parameters": {
+    "AgentName": {
+      "name": "name",
+      "in": "path",
+      "required": true,
+      "schema": { "type": "string" }
+    },
+    "Source": {
+      "name": "source",
+      "in": "path",
+      "required": true,
+      "schema": { "type": "string", "enum": ["upstream", "ours"] }
+    },
+    "Version": {
+      "name": "version",
+      "in": "path",
+      "required": true,
+      "schema": { "type": "string" }
+    }
+  },
+  "responses": {
+    "Unauthorized": {
+      "description": "Missing or invalid credentials.",
+      "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } }
+    },
+    "NotFound": {
+      "description": "Resource not found.",
+      "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } }
+    },
+    "ServiceUnavailable": {
+      "description": "Index not loaded yet.",
+      "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } }
+    }
+  }
+}

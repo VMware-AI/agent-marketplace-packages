@@ -1,8 +1,8 @@
-# openclaw 2026.7.2 (upstream)
+# openclaw 2026.7.1-2 (upstream)
 
 ## About
 
-This is an offline-installable bundle for the upstream `openclaw` Node.js CLI version `2026.7.2`, sourced from the [openclaw/openclaw](https://github.com/openclaw/openclaw) GitHub repository and the npm registry.
+This is an offline-installable bundle for the upstream `openclaw` Node.js CLI version `2026.7.1-2`, sourced from the [openclaw/openclaw](https://github.com/openclaw/openclaw) GitHub repository and the npm registry.
 
 `openclaw` is a multi-channel AI gateway — install once, then access your assistant from WhatsApp / Telegram / Slack / Discord / etc. The Linux CLI runs as a single `openclaw` binary on your machine and acts as the control plane for the desktop / mobile companion apps.
 
@@ -26,7 +26,7 @@ sudo apt-get install -y ca-certificates curl
 ## Install
 
 ```bash
-cd agents/openclaw/upstream/2026.7.2
+cd agents/openclaw/upstream/2026.7.1-2
 ./install.sh    # installs to $HOME/.local
 ```
 
@@ -34,7 +34,7 @@ The install will:
 1. Verify the tarball's checksums
 2. Detect any prior install and run a migration if needed
 3. Deploy the bundled Node 22 to `$HOME/.local/openclaw/runtime/node`
-4. Run `npm install openclaw@2026.7.2` into `$HOME/.local/openclaw/2026.7.2/`
+4. Run `npm install openclaw@2026.7.2` into `$HOME/.local/openclaw/2026.7.1-2/`
 5. Symlink `$HOME/.local/bin/openclaw` to the installed CLI
 6. Run `openclaw --version` to verify
 7. Write `$HOME/.local/state/openclaw.state.json`

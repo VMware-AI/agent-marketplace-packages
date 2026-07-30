@@ -6,7 +6,7 @@ import (
 	"context"
 	"flag"
 	"fmt"
-	"log"
+	"log/slog"
 	"net/http"
 	"os"
 	"os/signal"
@@ -42,16 +42,22 @@ type RepoConfig struct {
 }
 
 type LoggingConfig struct {
-	Level string `yaml:"level"` // debug | info | warn | error
+	Level  string `yaml:"level"`  // debug | info | warn | error
+	Format string `yaml:"format"` // text | json
+	File   string `yaml:"file"`   // optional log file path (append)
 }
 
 func main() {
 	configPath := flag.String("config", "/etc/agent-marketplace/config.yaml", "path to config YAML")
+	logFormat := flag.String("log-format", "", "log format: text|json (default: text; env MARKETPLACE_API_LOG_FORMAT or yaml logging.format also accepted)")
+	logFile := flag.String("log-file", "", "optional log file path; logs go to both stdout and this file (env MARKETPLACE_API_LOG_FILE or yaml logging.file)")
 	flag.Parse()
 
 	cfg, err := loadConfig(*configPath)
 	if err != nil {
-		log.Fatalf("load config: %v", err)
+		// Logger isn't built yet — fall back to plain stderr via stdlib.
+		fmt.Fprintf(os.Stderr, "load config: %v\n", err)
+		os.Exit(1)
 	}
 
 	// Env-var overrides — env wins over config.yaml so operators can do
@@ -59,14 +65,34 @@ func main() {
 	// Each var is optional; if unset, the config-file value stands.
 	applyEnvOverrides(cfg)
 
+	// CLI flags win over env (most explicit input).
+	if *logFormat != "" {
+		cfg.Logging.Format = *logFormat
+	}
+	if *logFile != "" {
+		cfg.Logging.File = *logFile
+	}
+
+	logger, closeLog, err := server.NewLogger(cfg.Logging.Level, cfg.Logging.Format, cfg.Logging.File)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "init logger: %v\n", err)
+		os.Exit(1)
+	}
+	defer func() {
+		_ = closeLog()
+	}()
+	slog.SetDefault(logger)
+
 	password := os.Getenv(cfg.Auth.PasswordEnv)
 	if password == "" {
-		log.Fatalf("auth.password_env %q is empty or unset", cfg.Auth.PasswordEnv)
+		logger.Error("auth.password_env is empty or unset", "env", cfg.Auth.PasswordEnv)
+		os.Exit(1)
 	}
 
 	distDir := cfg.Repo.DistDir
 	if distDir == "" {
-		log.Fatalf("repo.dist_dir is required")
+		logger.Error("repo.dist_dir is required")
+		os.Exit(1)
 	}
 
 	dist := repo.NewDir(distDir)
@@ -75,16 +101,21 @@ func main() {
 	// means the dist/ directory is broken and we cannot serve traffic.
 	idx, err := dist.LoadIndex()
 	if err != nil {
-		log.Fatalf("load index.json: %v", err)
+		logger.Error("load index.json", "err", err)
+		os.Exit(1)
 	}
 	if err := dist.Validate(idx); err != nil {
-		log.Fatalf("validate dist/: %v", err)
+		logger.Error("validate dist/", "err", err)
+		os.Exit(1)
 	}
-	log.Printf("loaded %d agent(s), %d total version(s) from %s",
-		len(idx.Agents), totalVersions(idx), distDir)
+	logger.Info("dist loaded",
+		"agents", len(idx.Agents),
+		"versions", totalVersions(idx),
+		"dist_dir", distDir,
+	)
 
 	state := &server.State{Index: idx, Dist: dist}
-	handler := server.NewRouter(state, password)
+	handler := server.NewRouter(state, password, logger)
 
 	srv := &http.Server{
 		Addr:              cfg.Server.Listen,
@@ -98,25 +129,26 @@ func main() {
 	defer cancel()
 
 	go func() {
-		log.Printf("marketplace-api listening on %s", cfg.Server.Listen)
+		logger.Info("marketplace-api listening", "addr", cfg.Server.Listen)
 		var err error
 		if cfg.Server.TLSCert != "" && cfg.Server.TLSKey != "" {
 			err = srv.ListenAndServeTLS(cfg.Server.TLSCert, cfg.Server.TLSKey)
 		} else {
-			log.Printf("WARNING: TLS not configured — running plaintext HTTP. Production must set tls_cert + tls_key.")
+			logger.Warn("TLS not configured — running plaintext HTTP. Production must set tls_cert + tls_key.")
 			err = srv.ListenAndServe()
 		}
 		if err != nil && err != http.ErrServerClosed {
-			log.Fatalf("listen: %v", err)
+			logger.Error("listen", "err", err)
+			os.Exit(1)
 		}
 	}()
 
 	<-ctx.Done()
-	log.Println("shutting down...")
+	logger.Info("shutting down")
 	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer shutdownCancel()
 	if err := srv.Shutdown(shutdownCtx); err != nil {
-		log.Printf("shutdown error: %v", err)
+		logger.Error("shutdown", "err", err)
 	}
 }
 
@@ -137,6 +169,12 @@ func applyEnvOverrides(cfg *Config) {
 	}
 	if v := os.Getenv("MARKETPLACE_API_LOG_LEVEL"); v != "" {
 		cfg.Logging.Level = v
+	}
+	if v := os.Getenv("MARKETPLACE_API_LOG_FORMAT"); v != "" {
+		cfg.Logging.Format = v
+	}
+	if v := os.Getenv("MARKETPLACE_API_LOG_FILE"); v != "" {
+		cfg.Logging.File = v
 	}
 	// TLS overrides — for deployments that mount certs into well-known
 	// paths and want to choose the file names via env instead of config.

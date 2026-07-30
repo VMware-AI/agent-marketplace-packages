@@ -1,128 +1,219 @@
 # Agent Marketplace Packages
 
-Offline-installable agent bundles for `opencode`, `openclaw`, and `hermes-agent`.
-
-Each (agent, version) ships as a **self-contained tarball** with:
-- A pre-fetched upstream release artifact (npm tarball, pip wheels, or static binary)
-- An idempotent `install.sh` that drops everything into `$HOME/.local` (no root required)
-- A SHA256 chain that detects tampering of any byte inside the tarball
-
-Runtimes (Node.js, Python, uv) are **NOT bundled** in the tarball — the target machine is expected to have them pre-installed at the version declared in `manifest.runtime_requirements`. Use `tools/install-runtime.sh` on Ubuntu 24.04 to provision them.
-
-This repository **is** the source of truth. To publish, run `tools/pack.sh`; consumers fetch the resulting `dist/<name>-<source>-<version>.tar.gz` over HTTPS and verify its `.sha256`.
+面向 `opencode`、`openclaw`、`hermes-agent` 的**离线分发 + HTTP 服务**包仓库。每个 `(agent, version)` 都打成一个自包含 tarball，由 `marketplace-api` 通过 HTTP 暴露，由 `agentpkg` 拉取并安装到目标机器。
 
 ---
 
-## Quick start (consumer side)
+## 仓库包含什么
+
+| 组件 | 路径 | 用途 |
+|---|---|---|
+| `marketplace-api` (Go) | [cmd/marketplace-api](cmd/marketplace-api/) | 只读 HTTP 服务：暴露 `dist/` 为 JSON + tarball API |
+| `agentpkg` (Go) | [cmd/agentpkg](cmd/agentpkg/) | 双用途 CLI：VM 侧安装 / 打包方 authoring |
+| 已打包的 agent | [agents/](agents/) | 三类 agent × 每个版本目录（含 manifest + install.sh + payload） |
+| 部署脚本与配置 | [deploy/](deploy/) | docker / docker-compose / systemd / 模板 config |
+| API + 协议文档 | [docs/](docs/) | API 参考、部署、CLI 手册、manifest schema 等 |
+
+`tools/*.sh` 是 shell 版本的辅助脚本，**保留过渡用**；新代码请用 `agentpkg package ...`。
+
+---
+
+## 架构一览
+
+```
+打包方                            运营方
+────────                          ──────────
+agents/<n>/upstream/<v>/          marketplace-api (TLS+auth)
+   manifest.json                      ↓ HTTP Basic Auth
+   install.sh                         ↓
+   payload/                       dist/*.tar.gz
+   ↑                                   ↑
+   │                                   │
+agentpkg package build ──→ dist/ ←───  bind-mount
+agentpkg package reindex              │
+                                      │
+                              agentpkg CLI
+                                      ↓
+                              target VM:
+                                  bin/<agent>
+                                  systemd --user unit
+                                  ~/.local/state/<agent>.state.json
+```
+
+---
+
+## 快速开始（消费方）
+
+假设市场 API 已经在 `https://marketplace.example.com:8443` 跑起来，密码是 `$MARKETPLACE_API_PASSWORD`。
 
 ```bash
-# 1. (One-time per target machine) provision the runtimes an agent needs.
-#    Run as root on Ubuntu 24.04. The agent's install.sh will fail fast
-#    with a clear hint if the runtime version is missing or wrong.
-sudo tools/install-runtime.sh install --from-manifest agents/<agent>/upstream/<v>/manifest.json
-#    Or pin explicitly:
-sudo tools/install-runtime.sh install node   22.22.3
-sudo tools/install-runtime.sh install python 3.12.13
-sudo tools/install-runtime.sh install uv     0.11.31
+# 1. 登录并把密码写到 ~/.config/agentpkg/credentials
+agentpkg login --server https://marketplace.example.com:8443 \
+               --password-file <(echo "$MARKETPLACE_API_PASSWORD")
 
-# 2. Make sure the system prerequisites are present (see docs/prerequisites.md)
-sudo apt-get install -y tar coreutils bash ca-certificates jq
+# 2. 看有什么可以装
+agentpkg index
 
-# 3. Download a tarball + its checksum
-curl -fSLO https://your-cdn.example/agents/opencode-upstream-0.0.55.tar.gz
-curl -fSLO https://your-cdn.example/agents/opencode-upstream-0.0.55.tar.gz.sha256
-sha256sum -c opencode-upstream-0.0.55.tar.gz.sha256
+# 3. 安装一个 agent（默认 stable 最新版；会自动写 systemd --user unit）
+agentpkg install opencode --version 1.18.9
 
-# 4. Extract and install (no root, no network)
-tar -xzf opencode-upstream-0.0.55.tar.gz
-cd opencode-upstream-0.0.55
-./install.sh            # installs to $HOME/.local by default
-
-# 5. Verify it actually runs
+# 4. 验证
 $HOME/.local/bin/opencode --version
+systemctl --user status opencode-web.service   # 如果 manifest 声明了服务
 ```
 
-The install script writes `$HOME/.local/state/<agent>.state.json` recording what was installed, where, and from which tarball.
-
----
-
-## Repository layout
-
-```
-agents/
-  <agent>/
-    upstream/<version>/          Versions that mirror upstream releases 1:1
-    ours/<version>/              Our forks / patches / internal builds
-      manifest.json              Single source of truth (see docs/manifest-schema.md)
-                                  Includes `runtime_requirements[]` declaring which
-                                  system-installed runtimes (Node/Python/uv) install.sh needs.
-      install.sh                 Self-contained install (validates tarball → verifies runtime
-                                  → deploys vendored payload → verifies --version)
-      uninstall.sh               Removes files recorded in state.json
-      migrate/                   Version-to-version migration scripts
-      payload/                   Vendored offline-install deps:
-                                    - npm tree (openclaw): pre-resolved by `npm install --global`
-                                    - Python wheels (hermes-agent): downloaded by `pip download`
-                                    - static binary (opencode)
-      files/                     Auxiliary config we ship on top
-      README.md                  Notes specific to this version
-
-tools/                            Maintenance tooling (NEVER enters a tarball)
-  fetch.sh                        Pull upstream artifacts into agents/<…>/payload/
-  pack.sh                         Build a tarball from a version directory
-  verify.sh                       Validate manifest + checksums + tarball consistency
-  install-runtime.sh               Provision Node/Python/uv on the target (Ubuntu 24.04)
-  sign.sh                         Optional GPG detached signature
-  publish.sh                      Upload tarball + sha256 + sig to a remote
-  index-gen.sh                    Rebuild dist/index.json from existing tarballs
-
-docs/
-  prerequisites.md                System packages required on the target machine
-  install-protocol.md             install.sh contract (env vars, exit codes, stdout)
-  manifest-schema.md              Every manifest.json field explained
-  upgrade-protocol.md             How version-to-version upgrades and migrations work
-  publishing-model.md             Trust levels, signing, CDN layout
-```
-
----
-
-## Concepts in one paragraph
-
-Every version directory is the **exact** root of its tarball. The tarball contains the install script, the embedded `manifest.json`, the upstream artifact (npm tree, Python wheels, or static binary), and the install.sh's helper files. Runtimes (Node, Python, uv) are **NOT** in the tarball — they live on the target machine, installed via `tools/install-runtime.sh` from the version declarations in `manifest.runtime_requirements`. The install script is **idempotent** — running it twice with the same tarball is a no-op. State is persisted in `$HOME/.local/state/<agent>.state.json` so future upgrades know what's installed. The manifest records the SHA256 of the tarball sidecar (`<name>.tar.gz.sha256`) plus per-file checksums; `tools/verify.sh` re-checks them on demand.
-
----
-
-## Currently packaged
-
-| Agent        | Source   | Version    | Runtime required (target-supplied) | Tarball size (est.) |
-|--------------|----------|------------|-------------------------------------|---------------------|
-| opencode     | upstream | 0.0.55     | (none — Go static)                  | ~14 MB              |
-| openclaw     | upstream | 2026.7.1-2 | Node.js ≥22.22.3 / ≥24.15.0 / ≥25.9 | ~62 MB              |
-| hermes-agent | upstream | 0.18.2     | Python 3.12 + uv ≥0.11              | ~47 MB              |
-
-Runtimes are NOT bundled — install them on the target machine with `tools/install-runtime.sh install --from-manifest agents/<name>/upstream/<v>/manifest.json` (Ubuntu 24.04 only).
-
-See `agents/<name>/upstream/<version>/README.md` for version-specific notes.
-
----
-
-## Maintainer workflow
+升级：
 
 ```bash
-# Add a new version of an existing agent
-tools/fetch.sh openclaw upstream 2026.7.2   # pulls upstream npm tgz + Node tarball
-tools/runtime-fetch.sh node 22.22.3 linux-x64   # cached in runtime-pool/
-# ... copy runtime into the version directory, write manifest.json + install.sh ...
-tools/verify.sh openclaw upstream 2026.7.2  # cross-check checksums
-tools/pack.sh openclaw upstream 2026.7.2    # → dist/openclaw-upstream-2026.7.2.tar.gz
+agentpkg upgrade opencode --version 1.19.0
 ```
 
-See `CONTRIBUTING.md` for the full SOP.
+卸载：
+
+```bash
+agentpkg uninstall opencode
+```
+
+详见 [docs/agentpkg.md](docs/agentpkg.md)。
 
 ---
 
-## Limitations (be aware)
+## 快速开始（运营方）
 
-- **No live testing** is performed on the install scripts in this repo. They are written to be correct by construction but have not been executed end-to-end against a real Linux container as of the initial commit. Validate in your environment before deploying.
-- **Linux x86_64 only** for now. The structure supports adding macOS / arm64 by extending `manifest.requires` and adding per-platform runtime directories, but those are not implemented.
-- **Trusted-path publishing**. SHA256 alone does not protect against a malicious CDN mirror — it only catches accidental corruption. For production, also enable `tools/sign.sh` (GPG detached signatures) so consumers can verify provenance.
+起一个 marketplace-api 服务：
+
+```bash
+# 本地编译
+make build
+
+# 单容器一键（自签 TLS，要求 EXTERNAL_IP）
+EXTERNAL_IP=$(curl -s https://ifconfig.me)
+export MARKETPLACE_API_PASSWORD='强密码'
+./deploy/start_marketplace_docker.sh up
+```
+
+或者直接跑二进制：
+
+```bash
+MARKETPLACE_API_PASSWORD='强密码' \
+  ./bin/marketplace-api \
+  --config deploy/config/marketplace-api.example.yaml \
+  --log-format json
+```
+
+或者用 docker compose：
+
+```bash
+cd deploy/compose
+EXTERNAL_IP=$YOUR_IP ./gen-tls.sh
+cp ../config/.env.example ./.env && $EDITOR ./.env
+docker compose up -d
+```
+
+详情见 [docs/deploy.md](docs/deploy.md)。
+
+---
+
+## 快速开始（打包方）
+
+加一个新版本：
+
+```bash
+# 1. scaffold
+agentpkg package init openclaw --source upstream --version 2026.7.2
+
+# 2. fetch 上游 artifact
+./tools/fetch.sh openclaw upstream 2026.7.2
+
+# 3. 写 manifest.json + install.sh + ...（详见 docs/manifest-schema.md）
+
+# 4. 校验
+agentpkg package verify agents/openclaw/upstream/2026.7.2
+
+# 5. 打 tarball + 重生 dist/index.json
+agentpkg package build agents/openclaw/upstream/2026.7.2 --out dist
+
+# 6. 签名（强烈建议）
+agentpkg package sign dist/openclaw-upstream-2026.7.2.tar.gz
+
+# 7. 推到 CDN / 让市场 API 读到（dist/ bind-mount 是只读的，重启即可）
+make release-images TAG=v0.1.0-$(date -u +%Y%m%d)   # 如果推到 quay
+```
+
+SOP 见 [CONTRIBUTING.md](CONTRIBUTING.md)。
+
+---
+
+## 当前已打包的 agent
+
+| Agent | Source | Version | Runtime（目标机自备） | Tarball 大小（约） |
+|---|---|---|---|---|
+| opencode | upstream | 1.18.9 | 无（Go static binary） | ~14 MB |
+| openclaw | upstream | 2026.7.1-2 | Node.js ≥22.22.3 / ≥24.15.0 / ≥25.9 | ~62 MB |
+| hermes-agent | upstream | 0.19.0 | Python 3.12 + uv ≥0.11 | ~47 MB |
+
+Runtime **不在 tarball 里**，由目标机用 [tools/install-runtime.sh](tools/install-runtime.sh) 在 Ubuntu 24.04 上预装（详见 [docs/prerequisites.md](docs/prerequisites.md)）。
+
+每个版本的细节见 `agents/<name>/upstream/<version>/README.md`。
+
+---
+
+## 日志 / 鉴权 / API 文档
+
+- **日志**：`marketplace-api` 用 `log/slog`（Go 1.21+ 标准库）。默认输出 **stdout**，可选 `--log-file` 追加写文件。级别由 `logging.level` 或 `MARKETPLACE_API_LOG_LEVEL` 控制（合法值 `debug|info|warn|error`）。详见 [docs/deploy.md § 配置](docs/deploy.md#配置configconfigyaml)。
+- **鉴权**：所有接口（除 `/api/v1/health`）走 HTTP Basic Auth，密码来自环境变量（默认 `MARKETPLACE_API_PASSWORD`）。`/api/v1/health` 是匿名探针，由路由顺序保证，被 `TestHealth_NoAuthRequired` 测试锁住。
+- **API 文档**：机器可读规范在 [docs/api/openapi.json](docs/api/openapi.json)；浏览器访问 `https://<host>:8443/swagger` 看 Swagger UI（CDN 加载）。手工改了 spec 后跑 `make openapi-embed && make openapi-check`。
+
+---
+
+## 项目结构
+
+```
+agent-marketplace-packages/
+├── cmd/
+│   ├── marketplace-api/         # HTTP server
+│   └── agentpkg/               # CLI
+├── internal/
+│   ├── apitypes/               # API JSON contracts
+│   ├── cli/                    # agentpkg 的 VM-side 命令
+│   ├── cli/packagecmd/         # agentpkg 的 author-side 命令
+│   ├── manifest/               # manifest.json 解析
+│   ├── repo/                   # dist/ 加载 + 校验
+│   └── server/                 # HTTP handlers + middleware + router
+├── agents/                     # 已打包的 agent
+│   └── <name>/<source>/<version>/
+│       ├── meta.yaml
+│       ├── manifest.json
+│       ├── install.sh
+│       ├── uninstall.sh
+│       ├── payload/
+│       └── migrate/
+├── dist/                       # build 出来的 tarball + index.json
+├── deploy/
+│   ├── start_marketplace_docker.sh    # docker run 一键
+│   ├── compose/                # docker-compose
+│   ├── config/                 # YAML 模板
+│   ├── docker/                 # Dockerfile
+│   ├── systemd/                # systemd unit 模板
+│   └── tls/                    # 自签证书
+├── docs/                       # API/CLI/部署/协议的文档（中文为主）
+├── tools/                      # shell 维护脚本（过渡中）
+├── Makefile                    # build / test / openapi-check / release-images
+├── go.mod / go.sum
+└── VERSION                     # 当前版本号
+```
+
+---
+
+## 限制
+
+- **未做端到端实跑测试** —— install.sh 是按「构造正确」设计的，但首次在新环境部署前请自己验一遍
+- **Linux x86_64 / arm64** —— 已通过 multi-arch 镜像支持；macOS / Windows 暂未
+- **TLS** —— 默认自签（仅适合本地 trust 验证），生产请替换为 CA 签证书
+- **Trusted-path publishing** —— sha256 防篡改但防不了恶意 CDN 替换整个 tarball；生产请同时启用 GPG 签名（见 [docs/publishing-model.md](docs/publishing-model.md)）
+
+---
+
+## 许可
+
+[MIT](LICENSE)
