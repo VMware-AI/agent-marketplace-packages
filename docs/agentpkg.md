@@ -56,9 +56,18 @@ agentpkg login --server https://marketplace.example.com:8443 \
                --password-file <(echo "$MARKETPLACE_API_PASSWORD")
 # 或
 agentpkg login --server https://...:8443 --password-stdin   <<< "$PW"
+# 或（agentpkg daemon 驱动）
+agentpkg login --server https://...:8443 --password "$MARKETPLACE_API_PASSWORD"
 ```
 
-`--server` 写入配置；`--password-stdin` / `--password-file` 写入凭证文件（mode `0600`）。成功后立即探测 `/api/v1/health` 验证连通。
+`--server` 写入配置；密码来源**互斥**（四选一）：
+
+- `--password <value>` — 直接传（密码会出现在 `ps` / `/proc/<pid>/cmdline`，适合 daemon/托管调用方）
+- `--password-stdin` — 从 stdin 读
+- `--password-file <path>` — 从文件读（mode `0600`）
+- 都不传 — 交互提示（`/dev/tty`）
+
+成功后立即探测 `/api/v1/health` 验证连通。
 
 ### `logout` —— 清除凭证
 

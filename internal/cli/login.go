@@ -16,40 +16,66 @@ import (
 //
 // Usage:
 //
-//	agentpkg login --server https://marketplace.example.com [--password-stdin]
+//	agentpkg login --server https://marketplace.example.com [--password <value>]
 //
 // Behavior:
 //   - GETs /api/v1/health to verify connectivity + auth.
 //   - On success: writes credentials (mode 0600) and saves the server URL
 //     to the config file.
 //   - On failure: returns the HTTP status + body for diagnosis.
+//
+// Password sources are mutually exclusive: --password, --password-stdin,
+// --password-file, or the interactive prompt (when none are given). Passing
+// more than one of the three explicit flags is rejected.
 func NewLoginCmd(cfgPath, credsPath *string) *cobra.Command {
 	var (
 		server        string
+		password      string
 		passwordStdin bool
 		passwordFile  string
 	)
 	c := &cobra.Command{
-		Use:   "login --server <URL> [--password-stdin | --password-file <file>]",
+		Use:   "login --server <URL> [--password <value> | --password-stdin | --password-file <file>]",
 		Short: "Authenticate to a marketplace-api and save credentials",
 		Long: `login verifies connectivity + credentials by calling GET /api/v1/health,
 then writes the server URL and password to disk for subsequent commands.
 
-By default the password is read interactively from the terminal. Pass
---password-stdin to read from stdin (recommended for scripts), or
---password-file to read from a specific file (chmod 0600).`,
+Password sources, mutually exclusive (priority: --password > --password-stdin
+> --password-file > interactive prompt):
+
+  --password <value>   pass the password directly (visible in the process
+                       table; intended for the agentpkg daemon and similar
+                       managed callers — prefer --password-file or
+                       --password-stdin in shell scripts)
+  --password-stdin     read the password from stdin (recommended for scripts)
+  --password-file <f>  read the password from a file (chmod 0600)
+  (none)               prompt interactively from /dev/tty`,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			if server == "" {
 				return fmt.Errorf("--server is required (or set 'server' in config.yaml)")
 			}
-			password, err := readPassword(passwordStdin, passwordFile)
+			picked := 0
+			if password != "" {
+				picked++
+			}
+			if passwordStdin {
+				picked++
+			}
+			if passwordFile != "" {
+				picked++
+			}
+			if picked > 1 {
+				return fmt.Errorf("pass only one of --password, --password-stdin, --password-file")
+			}
+			pw, err := readPassword(password, passwordStdin, passwordFile)
 			if err != nil {
 				return err
 			}
-			return doLogin(server, password, *cfgPath, *credsPath)
+			return doLogin(server, pw, *cfgPath, *credsPath)
 		},
 	}
 	c.Flags().StringVar(&server, "server", "", "marketplace-api base URL, e.g. https://marketplace.example.com")
+	c.Flags().StringVar(&password, "password", "", "pass the password directly (mutually exclusive with --password-stdin and --password-file)")
 	c.Flags().BoolVar(&passwordStdin, "password-stdin", false, "read password from stdin")
 	c.Flags().StringVar(&passwordFile, "password-file", "", "read password from a file (chmod 0600)")
 	return c
@@ -112,8 +138,18 @@ func doLogin(server, password, cfgPath, credsPath string) error {
 	return nil
 }
 
-func readPassword(stdin bool, file string) (string, error) {
+// readPassword returns the password from one of the explicit sources
+// (password literal, stdin, or file) or falls back to an interactive /dev/tty
+// prompt when none are provided. The three explicit sources are mutually
+// exclusive — the caller is expected to have enforced that before reaching
+// this function.
+func readPassword(password string, stdin bool, file string) (string, error) {
 	switch {
+	case password != "":
+		if len(password) == 0 {
+			return "", fmt.Errorf("empty password from --password")
+		}
+		return password, nil
 	case stdin:
 		data, err := readAll(os.Stdin)
 		if err != nil {

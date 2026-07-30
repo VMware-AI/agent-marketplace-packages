@@ -84,11 +84,24 @@ func TestReadPassword_FromFile(t *testing.T) {
 	if err := os.WriteFile(p, []byte("from-file-secret\n"), 0600); err != nil {
 		t.Fatalf("write: %v", err)
 	}
-	got, err := readPassword(false, p)
+	got, err := readPassword("", false, p)
 	if err != nil {
 		t.Fatalf("readPassword: %v", err)
 	}
 	if got != "from-file-secret" {
+		t.Errorf("got %q", got)
+	}
+}
+
+// TestReadPassword_FromArg exercises the --password branch (used by the
+// agentpkg daemon when it can't drop a file or pipe stdin — accepts the
+// password directly as a flag value).
+func TestReadPassword_FromArg(t *testing.T) {
+	got, err := readPassword("from-arg-secret", false, "")
+	if err != nil {
+		t.Fatalf("readPassword: %v", err)
+	}
+	if got != "from-arg-secret" {
 		t.Errorf("got %q", got)
 	}
 }
@@ -102,7 +115,7 @@ func TestReadPassword_TrimsCRLF(t *testing.T) {
 	if err := os.WriteFile(p, []byte("secret\r\n"), 0600); err != nil {
 		t.Fatalf("write: %v", err)
 	}
-	got, err := readPassword(false, p)
+	got, err := readPassword("", false, p)
 	if err != nil {
 		t.Fatalf("readPassword: %v", err)
 	}
@@ -122,7 +135,54 @@ func TestReadPassword_RejectsEmpty(t *testing.T) {
 	if err := os.WriteFile(p, []byte(""), 0600); err != nil {
 		t.Fatalf("write: %v", err)
 	}
-	if _, err := readPassword(false, p); err == nil {
+	if _, err := readPassword("", false, p); err == nil {
 		t.Error("expected error for empty password file")
+	}
+}
+
+// TestReadPassword_PasswordBeatsStdin covers the documented priority order
+// when multiple sources are passed in by mistake: --password wins so the
+// caller gets a deterministic result (the cobra-level RunE rejects the
+// combination before reaching here, but defense in depth).
+func TestReadPassword_PasswordBeatsStdin(t *testing.T) {
+	got, err := readPassword("literal", true, "")
+	if err != nil {
+		t.Fatalf("readPassword: %v", err)
+	}
+	if got != "literal" {
+		t.Errorf("got %q, want %q (--password must win over --password-stdin)", got, "literal")
+	}
+}
+
+// TestLoginCmd_RejectsMultiplePasswordSources hands the cobra cmd
+// combinations of --password / --password-stdin / --password-file and
+// verifies the cmd rejects (>1) with a clear error before any HTTP call.
+func TestLoginCmd_RejectsMultiplePasswordSources(t *testing.T) {
+	cases := [][]string{
+		{"--password", "a", "--password-stdin"},
+		{"--password", "a", "--password-file", "/tmp/x"},
+		{"--password-stdin", "--password-file", "/tmp/x"},
+	}
+	for _, args := range cases {
+		// We bypass the network: point --server at an unreachable host so
+		// that if the cmd DOES try to call doLogin, the test fails for the
+		// right reason (it should never reach there).
+		full := append([]string{
+			"--server", "http://127.0.0.1:1",
+		}, args...)
+		// stdin would otherwise block; the cmd should reject before reading.
+		cmd := NewLoginCmd(new(string), new(string))
+		cmd.SetArgs(full)
+		cmd.SetIn(strings.NewReader(""))
+		cmd.SetOut(&strings.Builder{})
+		cmd.SetErr(&strings.Builder{})
+		err := cmd.Execute()
+		if err == nil {
+			t.Errorf("args %v: expected error, got nil", args)
+			continue
+		}
+		if !strings.Contains(err.Error(), "pass only one of") {
+			t.Errorf("args %v: error %q does not mention mutual-exclusion", args, err.Error())
+		}
 	}
 }
