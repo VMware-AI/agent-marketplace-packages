@@ -14,16 +14,21 @@ type Index struct {
 }
 
 // Agent is one agent entry in index.json — it merges meta.yaml (display_name,
-// description, icon, category, tags) with all version entries (each carrying
+// description, logo, category, tags) with all version entries (each carrying
 // a full technical manifest).
 type Agent struct {
-	Name        string    `json:"name"`
-	DisplayName string    `json:"display_name"`
-	Description string    `json:"description"`
-	Icon        string    `json:"icon"`
-	Category    string    `json:"category"`
-	Tags        []string  `json:"tags"`
-	Versions    []Version `json:"versions"`
+	Name        string `json:"name"`
+	DisplayName string `json:"display_name"`
+	Description string `json:"description"`
+	// Logo mirrors meta.yaml's `logo` field. Format rules live in
+	// internal/manifest.validateLogo (data:image/...;base64,..., http(s) URL,
+	// or "" for "use the consumer's default"). The marketplace-api serves
+	// this string verbatim — the consuming backend decides whether to fetch,
+	// decode, or fall back to its embedded default.
+	Logo     string    `json:"logo"`
+	Category string    `json:"category"`
+	Tags     []string  `json:"tags"`
+	Versions []Version `json:"versions"`
 }
 
 // Version is one entry under Agent.Versions.
@@ -194,7 +199,7 @@ type AgentStripped struct {
 	Name        string            `json:"name"`
 	DisplayName string            `json:"display_name"`
 	Description string            `json:"description"`
-	Icon        string            `json:"icon"`
+	Logo        string            `json:"logo"`
 	Category    string            `json:"category"`
 	Tags        []string          `json:"tags"`
 	Versions    []VersionStripped `json:"versions"`
@@ -221,7 +226,7 @@ func (idx *Index) Strip() *IndexStripped {
 			Name:        a.Name,
 			DisplayName: a.DisplayName,
 			Description: a.Description,
-			Icon:        a.Icon,
+			Logo:        a.Logo,
 			Category:    a.Category,
 			Tags:        a.Tags,
 			Versions:    make([]VersionStripped, 0, len(a.Versions)),

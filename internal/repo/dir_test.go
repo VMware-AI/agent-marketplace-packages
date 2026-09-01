@@ -116,7 +116,7 @@ func TestDir_Validate_MismatchAndMissing(t *testing.T) {
 	writeFile(t, dir, "x.tar.gz.sha256", []byte(sidecarHex+"  x.tar.gz\n"))
 
 	d := NewDir(dir)
-	good := `{"generated_at":"","schema_version":"1.0","agents":[{"name":"a","display_name":"A","description":"","icon":"","category":"","tags":[],"versions":[{"version":"1","source":"upstream","channel":"stable","tarball":{"filename":"x.tar.gz","size_bytes":7,"sha256":"sha256:` + sidecarHex + `"},"manifest":{}}]}]}`
+	good := `{"generated_at":"","schema_version":"1.0","agents":[{"name":"a","display_name":"A","description":"","logo":"","category":"","tags":[],"versions":[{"version":"1","source":"upstream","channel":"stable","tarball":{"filename":"x.tar.gz","size_bytes":7,"sha256":"sha256:` + sidecarHex + `"},"manifest":{}}]}]}`
 	if err := d.Validate(parseIdxOrFail(t, []byte(good))); err != nil {
 		t.Errorf("good case: %v", err)
 	}

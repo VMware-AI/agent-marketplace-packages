@@ -16,7 +16,7 @@ func TestParseIndex_RoundTrip(t *testing.T) {
                 "name": "opencode",
                 "display_name": "OpenCode",
                 "description": "AI coding agent",
-                "icon": "code",
+                "logo": "https://example.com/opencode.svg",
                 "category": "developer",
                 "tags": ["ai", "code"],
                 "versions": [

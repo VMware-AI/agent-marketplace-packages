@@ -119,7 +119,7 @@ func buildIndexFromDir(outDir string) (*apitypes.Index, error) {
 					meta.Defaults(parsed.name)
 					agent.DisplayName = meta.DisplayName
 					agent.Description = meta.Description
-					agent.Icon = meta.Icon
+					agent.Logo = meta.Logo
 					agent.Category = meta.Category
 					agent.Tags = meta.Tags
 				}

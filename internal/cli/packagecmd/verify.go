@@ -16,7 +16,7 @@ import (
 // NewVerifyCmd creates `agentpkg package verify`.
 //
 // Walks the agent directory and checks:
-//  1. meta.yaml (if present) — schema validation (display_name/icon/category/tags)
+//  1. meta.yaml (if present) — schema validation (display_name/logo/category/tags)
 //  2. Every agents/<name>/<source>/<version>/manifest.json — schema + checksums
 //     (recomputes SHA256 of payload/runtime files and compares to manifest.checksums)
 func NewVerifyCmd() *cobra.Command {
@@ -49,8 +49,8 @@ func verifyAgent(agentDir string, strict bool) error {
 			return err
 		}
 		meta.Defaults(name)
-		fmt.Printf("  meta.yaml:    ok    display_name=%q icon=%q category=%q tags=%v\n",
-			meta.DisplayName, meta.Icon, meta.Category, meta.Tags)
+		fmt.Printf("  meta.yaml:    ok    display_name=%q logo=%q category=%q tags=%v\n",
+			meta.DisplayName, meta.Logo, meta.Category, meta.Tags)
 	} else {
 		fmt.Println("  meta.yaml:    skip  (not present)")
 	}

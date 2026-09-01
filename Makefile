@@ -19,6 +19,7 @@ TAG  ?= $(VERSION)-$(shell date -u +%Y%m%d)
 
 BIN_DIR      ?= bin
 GO          ?= go
+LINUX_ARCH  ?= amd64
 # ---- Build ----
 .PHONY: build
 build: ## Build both binaries (marketplace-api + agentpkg) into $(BIN_DIR)
@@ -35,6 +36,15 @@ build-api: ## Build only marketplace-api
 build-agentpkg: ## Build only agentpkg CLI
 	@mkdir -p $(BIN_DIR)
 	$(GO) build -trimpath -ldflags="-s -w" -o $(BIN_DIR)/agentpkg ./cmd/agentpkg
+
+# Cross-compile agentpkg for Linux. Standalone — no dependency on `build`
+# or `build-agentpkg`, since the host build isn't useful here and would
+# just waste a build slot. Override the arch from the CLI:
+#   make build-agentpkg-linux LINUX_ARCH=arm64
+.PHONY: build-agentpkg-linux
+build-agentpkg-linux: ## Cross-compile agentpkg for Linux (LINUX_ARCH=amd64|arm64, default amd64)
+	@mkdir -p $(BIN_DIR)
+	GOOS=linux GOARCH=$(LINUX_ARCH) $(GO) build -trimpath -ldflags="-s -w" -o $(BIN_DIR)/agentpkg-linux-$(LINUX_ARCH) ./cmd/agentpkg
 
 .PHONY: build-linux
 build-linux: ## Cross-compile marketplace-api for Linux amd64

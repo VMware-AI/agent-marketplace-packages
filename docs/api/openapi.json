@@ -58,7 +58,7 @@
           "name": { "type": "string" },
           "display_name": { "type": "string" },
           "description": { "type": "string" },
-          "icon": { "type": "string" },
+          "logo": { "type": "string", "description": "Empty, http(s) URL, or data:image/...;base64,... — see meta-yaml-schema.md" },
           "category": { "type": "string" },
           "tags": { "type": "array", "items": { "type": "string" } },
           "versions": { "type": "array", "items": { "$ref": "#/components/schemas/VersionStripped" } }
@@ -88,7 +88,7 @@
           "name": { "type": "string" },
           "display_name": { "type": "string" },
           "description": { "type": "string" },
-          "icon": { "type": "string" },
+          "logo": { "type": "string", "description": "Empty, http(s) URL, or data:image/...;base64,... — see meta-yaml-schema.md" },
           "category": { "type": "string" },
           "tags": { "type": "array", "items": { "type": "string" } },
           "versions": { "type": "array", "items": { "$ref": "#/components/schemas/Version" } }

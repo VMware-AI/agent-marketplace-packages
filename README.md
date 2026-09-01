@@ -211,6 +211,7 @@ agent-marketplace-packages/
 - **Linux x86_64 / arm64** —— 已通过 multi-arch 镜像支持；macOS / Windows 暂未
 - **TLS** —— 默认自签（仅适合本地 trust 验证），生产请替换为 CA 签证书
 - **Trusted-path publishing** —— sha256 防篡改但防不了恶意 CDN 替换整个 tarball；生产请同时启用 GPG 签名（见 [docs/publishing-model.md](docs/publishing-model.md)）
+- **Agent 服务端口硬编码为 `8080`** —— 当前 manifest schema 没有暴露端口配置字段，所有 agent 的 `services[].command` 都必须把 `--port 8080` 直接写在 argv 里；systemd unit 是把 manifest 里的 `command` 数组原样拼成 `ExecStart=`（见 [internal/cli/install.go:449-451](internal/cli/install.go#L449-L451)），没有 env-var 覆盖通道，`agentpkg install` 也没有 `--port` 旗标。**新增或修改 agent 模板时如需调整端口，必须同时修改 `agents/<name>/upstream/<version>/manifest.json` 以及对应的 verify / install 测试断言，重新 `agentpkg package build` 并发布新 tarball 才会生效。**`agentpkg package init` 也会默认按 `--port 8080` 生成 `services[].command`。
 
 ---
 

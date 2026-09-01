@@ -17,7 +17,7 @@ import (
 
 // agentTemplate is the directory layout scaffolded by `package init`.
 const agentTemplate = `agents/<name>/
-├── meta.yaml                    # agent-level marketing metadata (display_name, description, icon, category, tags)
+├── meta.yaml                    # agent-level marketing metadata (display_name, description, logo, category, tags)
 └── <source>/                    # upstream | ours
     └── <version>/               # semver (or CalVer) version segment
         ├── manifest.json         # technical manifest (schema_version, runtime_constraints, payload, ...)
@@ -46,9 +46,10 @@ display_name: "<display_name>"
 # Required: one-line description (10–200 chars). Shown on the card.
 description: "<description>"
 
-# Required: one of the icon identifiers from docs/icon-catalog.md.
-# Rendered by the frontend using its own icon library (lucide, heroicons, ...).
-icon: "<icon>"
+# Optional: logo. Leave empty to use the consumer's default placeholder.
+# Accepts an http(s) URL or a data:image/<mime>;base64,... URL (preferred
+# for offline / air-gapped deployments). See docs/logo-format.md.
+logo: "<logo>"
 
 # Required: one of the category IDs from docs/category-catalog.md.
 category: "<category>"
@@ -112,7 +113,7 @@ func scaffoldAgent(name, root string) error {
 	fmt.Println()
 	fmt.Printf("Scaffolded %s\n", root)
 	fmt.Println("Next steps:")
-	fmt.Println("  1. edit agents/" + name + "/meta.yaml — fill in display_name/description/icon/category/tags")
+	fmt.Println("  1. edit agents/" + name + "/meta.yaml — fill in display_name/description/logo/category/tags")
 	fmt.Println("  2. edit agents/" + name + "/upstream/0.1.0/manifest.json — set runtime_constraints, payload, requires")
 	fmt.Println("  3. drop entry-point into agents/" + name + "/upstream/0.1.0/payload/bin/")
 	fmt.Println("  4. agentpkg package verify agents/" + name)
@@ -130,7 +131,7 @@ func renderMeta(name string) string {
 		"name":         name,
 		"display_name": name,
 		"description":  fmt.Sprintf("Short description for %s (10-200 chars).", name),
-		"icon":         "robot",
+		"logo":         "",
 		"category":     "utility",
 	}
 	var buf bytes.Buffer
@@ -142,7 +143,7 @@ func renderMeta(name string) string {
 
 func renderManifest(name, source, version string) string {
 	return fmt.Sprintf(`{
-  "schema_version": "1.0",
+  "schema_version": "1.1",
   "agent":         %q,
   "source":        %q,
   "version":       %q,
@@ -181,9 +182,18 @@ func renderManifest(name, source, version string) string {
   "scripts": {
     "install":   "install.sh",
     "uninstall": "uninstall.sh"
-  }
+  },
+  "services": [
+    {
+      "name":        "serve",
+      "command":     [%q, "serve", "--port", "8080"],
+      "restart":     "on-failure",
+      "working_dir": "{{DEPLOY_ROOT}}",
+      "description": "%s HTTP daemon, pinned to port 8080"
+    }
+  ]
 }
-`, name, source, version, name, name, version, name, name)
+`, name, source, version, name, name, version, name, name, name, name)
 }
 
 func renderInstallSh() string {

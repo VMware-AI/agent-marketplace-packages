@@ -223,6 +223,8 @@ Names of the install + uninstall scripts in this directory. (Default: same names
 
 agentpkg runs after `install.sh` succeeds and: writes the unit file to `~/.config/systemd/user/<agent>-<name>.service`, runs `systemctl --user daemon-reload`, then `systemctl --user enable --now <unit>`. Soft-fails (warning) on `systemctl --user` absence. The agent's `WorkingDirectory=` is created by `install.sh` before the unit starts.
 
+> **硬约束：服务端口固定为 `8080`** —— schema 没有独立的 `port` 字段；端口只能放在 `command[]` argv 里，且 **必须为 `8080`**。原因：systemd 单元的 `ExecStart=` 是把 `command` 数组原样用空格拼接而成（[internal/cli/install.go:449-451](internal/cli/install.go#L449-L451)），整个单元里没有 `Environment=` 行，`agentpkg install` 也没有 `--port` 旗标，所以无法在运行时覆盖。新增 / 修改 agent 模板时如果要调整端口，请同步修改 `manifest.json` 里的 `command[]` 和对应的 verify / install 测试断言，重新 `agentpkg package build` 发布。`agentpkg package init` 也按此约束默认生成 `["<name>", "serve", "--port", "8080"]`。
+
 ## configs (schema 1.1+)
 
 ```json

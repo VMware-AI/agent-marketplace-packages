@@ -92,7 +92,7 @@ curl https://host:8443/api/v1/health
       "name": "opencode",
       "display_name": "OpenCode",
       "description": "...",
-      "icon": "code",
+      "logo": "https://example.com/opencode.svg",
       "category": "code-assistant",
       "tags": ["cli"],
       "versions": [

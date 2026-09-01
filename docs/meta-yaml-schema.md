@@ -10,10 +10,10 @@
 # Required
 display_name: "OpenCode"        # human-readable name (UI label); falls back to agent name if blank
 description: "AI 编码智能体..."  # one-line description, 10–200 chars
-icon:        "code"             # from docs/icon-catalog.md
 category:    "developer"        # from docs/category-catalog.md
 
 # Optional
+logo:        ""                 # empty, http(s) URL, or data:image/...;base64,... (see docs/logo-format.md)
 tags:                            # 0–10 search tags, lowercase, dash-separated
   - ai
   - terminal
@@ -26,8 +26,8 @@ tags:                            # 0–10 search tags, lowercase, dash-separated
 |-------|------|----------|-------------|
 | `display_name` | string | no (defaults to `agent` name) | — |
 | `description` | string | **yes** | 10–200 characters |
-| `icon` | string | **yes** | must be in [icon catalog](icon-catalog.md) |
 | `category` | string | **yes** | must be in [category catalog](category-catalog.md) |
+| `logo` | string | no | empty, http(s) URL, or `data:image/...;base64,...`; see [logo format](logo-format.md) |
 | `tags` | list[string] | no | 0–10 items, each matches `[a-z0-9-]{1,32}` |
 
 ## Validation
@@ -36,8 +36,8 @@ tags:                            # 0–10 search tags, lowercase, dash-separated
 
 Validation source-of-truth lives in:
 
-- `internal/manifest/meta.go` — Go validation
-- `internal/manifest/catalogs.go` — icon + category catalogs
+- `internal/manifest/meta.go` — Go validation (incl. `validateLogo` for the logo format)
+- `internal/manifest/catalogs.go` — category catalog
 
 ## Example
 
@@ -45,7 +45,7 @@ Validation source-of-truth lives in:
 # agents/opencode/meta.yaml
 display_name: "OpenCode"
 description: "AI 编码智能体，专注于终端内代码理解、生成与调试"
-icon: "code"
+logo: "https://example.com/opencode.svg"
 category: "developer"
 tags:
   - ai
@@ -64,7 +64,7 @@ tags:
       "name":         "opencode",
       "display_name": "OpenCode",
       "description":  "AI 编码智能体，...",
-      "icon":         "code",
+      "logo":         "https://example.com/opencode.svg",
       "category":     "developer",
       "tags":         ["ai", "terminal", "code"],
       "versions": [
