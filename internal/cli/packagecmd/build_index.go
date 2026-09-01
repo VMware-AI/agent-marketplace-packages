@@ -262,10 +262,10 @@ func convertManifest(m *manifest.Manifest) apitypes.Manifest {
 			SystemTools:    m.Requires.SystemTools,
 		}
 	}
-	for _, rc := range m.RuntimeConstraints {
-		out.RuntimeConstraints = append(out.RuntimeConstraints, apitypes.RuntimeConstraint{
-			Name: rc.Name, MinVersion: rc.MinVersion, MaxVersion: rc.MaxVersion,
-			UseSystem: rc.UseSystem,
+	for _, rr := range m.RuntimeRequirements {
+		out.RuntimeRequirements = append(out.RuntimeRequirements, apitypes.RuntimeRequirement{
+			Name: rr.Name, Version: rr.Version,
+			InstallHint: rr.InstallHint, VerifyCmd: rr.VerifyCmd,
 		})
 	}
 	for _, pe := range m.Payload {

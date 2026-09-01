@@ -78,7 +78,7 @@ python3 -m pip download \
 - npm：`cp -a payload/openclaw/. $DEPLOY_ROOT/`
 - Python：`uv pip install --no-index --find-links payload/wheels/`
 
-**Runtime（Node / Python / uv）不打进 tarball**。这些在 target 机上用 `./tools/install-runtime.sh` 装，版本约束写在 `manifest.runtime_constraints` 里。
+**Runtime（Node / Python / uv）不打进 tarball**。这些在 target 机上用 `./tools/install-runtime.sh` 装，版本约束写在 `manifest.runtime_requirements` 里。
 
 ---
 
@@ -88,9 +88,9 @@ python3 -m pip download \
 
 - `agent` / `source` / `version` / `channel`
 - `upstream.sha256`（fetch.sh 已经填好）
-- `runtime_constraints[]` —— target 自带的 runtime 列表，例如：
+- `runtime_requirements[]` —— target 自带的 runtime 列表，例如：
   ```json
-  { "name": "node", "min_version": ">=22.22.3 <23", ... }
+  { "name": "node", "version": ">=22.22.3 <23", "verify_cmd": "node --version", "install_hint": "..." }
   ```
 - `payload[]` —— 拷到 `$HOME/.local/<agent>/...` 的文件
 - `requires.system_packages` / `requires.system_tools`
@@ -108,7 +108,7 @@ python3 -m pip download \
 1. 重新校验 tarball SHA256 对 `manifest.tarball.sha256`；不匹配立即 fail
 2. 重算 `payload/` `runtime/` `files/` 下每个文件 SHA256 对 `manifest.checksums`
 3. 检查 `requires.system_tools` 在 `PATH` 上；缺失 exit 40
-4. **校验 runtime 要求**：检查 `manifest.runtime_constraints` 中声明的 runtime 是否在 target 上就位；缺失或版本不对，exit 50 并打印 `install_hint`
+4. **校验 runtime 要求**：检查 `manifest.runtime_requirements` 中声明的 runtime 是否在 target 上就位；缺失或版本不对，exit 50 并打印 `install_hint`
 5. 读 `$HOME/.local/state/<agent>.state.json`（如存在），决定 fresh install 还是 upgrade
 6. 部署 runtime + payload + files 到 `$HOME/.local/<agent>/...`（只走用户可写路径）
 7. 写新的 `state.json`

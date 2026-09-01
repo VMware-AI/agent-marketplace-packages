@@ -62,7 +62,7 @@ type Manifest struct {
 	Upstream           *Upstream           `json:"upstream,omitempty"`
 	ForkOf             *ForkOf             `json:"fork_of,omitempty"`
 	Requires           *Requires           `json:"requires"`
-	RuntimeConstraints []RuntimeConstraint `json:"runtime_constraints"`
+	RuntimeRequirements []RuntimeRequirement `json:"runtime_requirements"`
 	Payload            []PayloadEntry      `json:"payload"`
 	Checksums          map[string]string   `json:"checksums"`
 	Tarball            *TarballRef         `json:"tarball"`
@@ -152,11 +152,11 @@ type Requires struct {
 	SystemTools    []string `json:"system_tools"`
 }
 
-type RuntimeConstraint struct {
-	Name       string `json:"name"`
-	MinVersion string `json:"min_version"`
-	MaxVersion string `json:"max_version,omitempty"`
-	UseSystem  bool   `json:"use_system"`
+type RuntimeRequirement struct {
+	Name        string `json:"name"`
+	Version     string `json:"version"`
+	InstallHint string `json:"install_hint,omitempty"`
+	VerifyCmd   string `json:"verify_cmd,omitempty"`
 }
 
 type PayloadEntry struct {

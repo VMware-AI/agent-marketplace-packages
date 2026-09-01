@@ -18,6 +18,7 @@ Every version directory must contain `manifest.json`. This file is the single so
 
   "requires":  { ... },
   "runtime":   [ ... ],
+  "runtime_requirements": [ ... ],
   "payload":   [ ... ],
 
   "checksums": { ... },
@@ -115,7 +116,27 @@ For `source=ours`, set to:
 
 `runtime: []` means the agent has no bundled runtime (opencode — pure static binary).
 
-> **区别**：`runtime[]` 是「本 tarball 自带的运行时」（schema 1.0）；`runtime_constraints[]` 是「需要从系统获取的运行时版本约束」（schema 1.1+）。两者并存，互不替代。
+## runtime_requirements (system-side runtime constraints, schema 1.1+)
+
+```json
+"runtime_requirements": [
+  {
+    "name":         "python",
+    "version":      ">=3.12,<3.14",
+    "verify_cmd":   "python3.12 --version",
+    "install_hint": "apt install -y python3.12 (Ubuntu 22.04+) or use pyenv: 'pyenv install 3.12.13'"
+  }
+]
+```
+
+| Field | Required | Notes |
+|-------|----------|-------|
+| `name` | yes | Runtime name (`node`, `python`, `uv`, ...) |
+| `version` | yes | Constraint expression parsed by the agent's `install.sh` and by `tools/install-runtime.sh`. Examples: `">=22.22.3 <23, >=24.15.0 <25, or >=25.9.0"`, `">=3.12,<3.14"`. |
+| `verify_cmd` | yes | Shell command that prints the installed runtime's version on stdout. Used by `install.sh` for the `>=` floor check. |
+| `install_hint` | no | Human-readable install instructions. Surfaced by `install.sh` on `FAIL: ...` exit 50 and by `tools/install-runtime.sh`. |
+
+> **区别**：`runtime[]` 是「本 tarball 自带的运行时」（schema 1.0，仅 openclaw 用）；`runtime_requirements[]` 是「需要从系统获取的运行时版本约束」（schema 1.1+，openclaw / hermes-agent）。两者并存，互不替代。
 
 ## payload
 

@@ -2,7 +2,7 @@
 // inside an agent tarball. Used by:
 //   - agentpkg package verify / build (client-side validation)
 //   - marketplace-api startup validation (server-side integrity check)
-//   - agentpkg install (extract payload/runtime_constraints)
+//   - agentpkg install (extract payload/runtime_requirements)
 package manifest
 
 import (
@@ -24,7 +24,7 @@ type Manifest struct {
 	ForkOf   *ForkOf      `json:"fork_of,omitempty"`
 
 	Requires           *Requires           `json:"requires"`
-	RuntimeConstraints []RuntimeConstraint `json:"runtime_constraints"`
+	RuntimeRequirements []RuntimeRequirement `json:"runtime_requirements"`
 	Payload            []PayloadEntry      `json:"payload"`
 
 	Checksums map[string]string `json:"checksums"`
@@ -156,11 +156,14 @@ type Requires struct {
 	SystemTools    []string `json:"system_tools"`
 }
 
-type RuntimeConstraint struct {
-	Name       string `json:"name"`
-	MinVersion string `json:"min_version"`
-	MaxVersion string `json:"max_version,omitempty"`
-	UseSystem  bool   `json:"use_system"`
+type RuntimeRequirement struct {
+	Name        string `json:"name"`
+	// Version is a constraint expression understood by the agent's
+	// install.sh (e.g. ">=22.22.3 <23, >=24.15.0 <25", ">=3.12,<3.14").
+	// Tools (tools/install-runtime.sh) parse this with jq + capture.
+	Version     string `json:"version"`
+	InstallHint string `json:"install_hint,omitempty"`
+	VerifyCmd   string `json:"verify_cmd,omitempty"`
 }
 
 type PayloadEntry struct {
