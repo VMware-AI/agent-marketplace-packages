@@ -20,7 +20,7 @@ const agentTemplate = `agents/<name>/
 ├── meta.yaml                    # agent-level marketing metadata (display_name, description, logo, category, tags)
 └── <source>/                    # upstream | ours
     └── <version>/               # semver (or CalVer) version segment
-        ├── manifest.json         # technical manifest (schema_version, runtime_constraints, payload, ...)
+        ├── manifest.json         # technical manifest (schema_version, runtime_requirements, payload, ...)
         ├── install.sh            # ~70 line installer (system runtime + offline wheels)
         ├── uninstall.sh          # inverse of install.sh
         ├── payload/
@@ -114,7 +114,7 @@ func scaffoldAgent(name, root string) error {
 	fmt.Printf("Scaffolded %s\n", root)
 	fmt.Println("Next steps:")
 	fmt.Println("  1. edit agents/" + name + "/meta.yaml — fill in display_name/description/logo/category/tags")
-	fmt.Println("  2. edit agents/" + name + "/upstream/0.1.0/manifest.json — set runtime_constraints, payload, requires")
+	fmt.Println("  2. edit agents/" + name + "/upstream/0.1.0/manifest.json — set runtime_requirements, payload, requires")
 	fmt.Println("  3. drop entry-point into agents/" + name + "/upstream/0.1.0/payload/bin/")
 	fmt.Println("  4. agentpkg package verify agents/" + name)
 	fmt.Println("  5. agentpkg package build agents/" + name + " --version 0.1.0")
@@ -155,11 +155,12 @@ func renderManifest(name, source, version string) string {
     "system_packages": [],
     "system_tools":    ["tar", "sha256sum", "bash"]
   },
-  "runtime_constraints": [
+  "runtime_requirements": [
     {
       "name":        "node",
-      "min_version":  "22.22.3",
-      "use_system":   true
+      "version":     ">=22.22.3",
+      "verify_cmd":  "node --version",
+      "install_hint": "apt install -y nodejs (Ubuntu 22.04+) or use nvm: 'nvm install 22'"
     }
   ],
   "payload": [

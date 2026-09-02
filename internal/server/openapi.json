@@ -117,7 +117,7 @@
           "upstream": { "$ref": "#/components/schemas/Upstream" },
           "fork_of": { "$ref": "#/components/schemas/ForkOf" },
           "requires": { "$ref": "#/components/schemas/Requires" },
-          "runtime_constraints": { "type": "array", "items": { "$ref": "#/components/schemas/RuntimeConstraint" } },
+          "runtime_requirements": { "type": "array", "items": { "$ref": "#/components/schemas/RuntimeRequirement" } },
           "payload": { "type": "array", "items": { "$ref": "#/components/schemas/PayloadEntry" } },
           "checksums": { "type": "object", "additionalProperties": { "type": "string" } },
           "tarball": { "$ref": "#/components/schemas/TarballRef" },
@@ -154,13 +154,13 @@
           "system_tools": { "type": "array", "items": { "type": "string" } }
         }
       },
-      "RuntimeConstraint": {
+      "RuntimeRequirement": {
         "type": "object",
         "properties": {
           "name": { "type": "string" },
-          "min_version": { "type": "string" },
-          "max_version": { "type": "string" },
-          "use_system": { "type": "boolean" }
+          "version": { "type": "string", "description": "Constraint expression understood by the agent's install.sh, e.g. '>=22.22.3 <23' or '>=3.12,<3.14'." },
+          "install_hint": { "type": "string" },
+          "verify_cmd": { "type": "string" }
         }
       },
       "PayloadEntry": {

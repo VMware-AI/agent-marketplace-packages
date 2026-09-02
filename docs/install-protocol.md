@@ -92,7 +92,7 @@ The `installed_files` list uses paths **relative to `deploy_root`** (with `../bi
 
 The `services` / `configs` / `config_dir` fields are appended by `agentpkg install` after `install.sh` returns (schema 1.1+). Old state.json files without them still work — agentpkg defaults to empty arrays. uninstall.sh is unaffected (it only consumes `installed_files`); agentpkg's uninstall path stops + removes each systemd unit before running uninstall.sh.
 
-> 注：`runtime` 字段是早期实验；当前 install.sh 把 runtime 版本直接写到 `manifest.runtime_constraints` 里并用其检测 `tools/install-runtime.sh`。state.json 里的 `runtime` 已不再被 agentpkg 读取。
+> 注：`runtime` 字段是早期实验；当前 install.sh 把 runtime 版本直接写到 `manifest.runtime_requirements` 里并用其检测 `tools/install-runtime.sh`。state.json 里的 `runtime` 已不再被 agentpkg 读取。
 
 ## render-config.sh contract
 

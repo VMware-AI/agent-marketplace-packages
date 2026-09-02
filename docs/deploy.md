@@ -17,7 +17,7 @@ marketplace-api 提供三种部署方式：
 | 启动命令 | `systemctl start marketplace-api` | `./deploy/start_marketplace_docker.sh up` | `docker compose up -d` |
 | TLS 证书 | 你提供 | 脚本自签（需 EXTERNAL_IP） | 脚本自签 |
 | 日志位置 | journald (按配置可加 `--log-file`) | `docker logs`（也是 stdout/stderr） | `docker compose logs` |
-| `dist/` 更新 | `systemctl restart marketplace-api` | `docker restart marketplace-api` | `docker compose restart` |
+| `dist/` 更新 | `systemctl reload marketplace-api`（或最多等 10s 自动） | `docker kill --signal=HUP marketplace-api`（或最多等 10s 自动） | `docker compose kill -s SIGHUP marketplace-api`（或最多等 10s自动） |
 | 适合场景 | 内网、生产长期运行 | 本地开发、临时演示 | 多服务协同、未来加 nginx/caddy |
 
 ---
@@ -166,7 +166,7 @@ make release-images TAG=v0.1.0-20250730
 
 ## dist/ 更新流程
 
-marketplace-api 在启动时加载 `dist/index.json`，运行时**只读**。要更新 index，必须重启。
+marketplace-api 启动时加载 `dist/index.json` 到内存。但与早期版本不同，**运行中的进程可以热加载**——不需要重启容器或服务。
 
 1. 打包新版本：
 
@@ -177,13 +177,15 @@ agentpkg package reindex --out dist
 
 2. 让运行中的服务读到新 `dist/`：
 
-| 部署方式 | 操作 |
-|---|---|
-| systemd | `systemctl restart marketplace-api` |
-| docker run | `./deploy/start_marketplace_docker.sh down && ... up`（脚本会重新拉镜像 + 重挂卷） |
-| docker compose | `docker compose restart marketplace-api` |
+| 部署方式 | 自动（默认 10s 内） | 立即生效（可选） |
+|---|---|---|
+| systemd | poll loop 看到新 index 即 reload | `systemctl reload marketplace-api`（unit 已含 `ExecReload`） |
+| docker run | poll loop 看到新 index 即 reload | `docker kill --signal=HUP marketplace-api`（容器无 shell，从 daemon 侧发信号；不丢 in-flight 请求） |
+| docker compose | poll loop 看到新 index 即 reload | `docker compose kill -s SIGHUP marketplace-api` |
 
-> 因为 `dist/` 是 bind-mount **只读**挂入的，容器内永远不会写它。每次重启读到磁盘最新内容。
+> 因为 `dist/` 是 bind-mount **只读**挂入的，容器内永远不会写它。polling 在容器 mount namespace 里直接 `stat` 宿主目录，能即时看到宿主的 mtime 变更，无需重启容器。
+>
+> `MARKETPLACE_API_POLL_INTERVAL=0` 可以关闭轮询，只保留 SIGHUP 触发（适用于 k8s 等不方便发 HUP 的环境，靠 10s 自动 reload 兜底）。
 
 ---
 

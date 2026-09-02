@@ -137,14 +137,33 @@ func buildOne(agentDir, source, channel, version, outDir string, dryRun bool) er
 		return fmt.Errorf("rename: %w", err)
 	}
 
-	// Step 3: compute sha256 + write .sha256 sidecar.
+	// Step 3: compute sha256 + write .sha256 sidecar atomically. We
+	// previously wrote the sidecar directly to its final path, which left
+	// a window during which the tarball existed with a missing or
+	// half-written sidecar — and a running marketplace-api process doing
+	// a re-read would fail Validate. temp + rename matches the pattern
+	// already used for the tarball (step 2) and index.json (step 4).
 	sha, err := computeFileSHA256(finalPath)
 	if err != nil {
 		return err
 	}
 	shaPath := finalPath + ".sha256"
-	if err := os.WriteFile(shaPath, []byte(sha+"  "+tarName+"\n"), 0644); err != nil {
-		return fmt.Errorf("write sha256: %w", err)
+	tmpSha, err := os.CreateTemp(outDir, "agentpkg-sha-*.tmp")
+	if err != nil {
+		return fmt.Errorf("create tmp sha file: %w", err)
+	}
+	if _, err := tmpSha.Write([]byte(sha + "  " + tarName + "\n")); err != nil {
+		tmpSha.Close()
+		os.Remove(tmpSha.Name())
+		return fmt.Errorf("write tmp sha: %w", err)
+	}
+	if err := tmpSha.Close(); err != nil {
+		os.Remove(tmpSha.Name())
+		return fmt.Errorf("close tmp sha: %w", err)
+	}
+	if err := os.Rename(tmpSha.Name(), shaPath); err != nil {
+		os.Remove(tmpSha.Name())
+		return fmt.Errorf("rename sha: %w", err)
 	}
 
 	fmt.Printf("Built %s (%s)\n", finalPath, humanSize(statSize(finalPath)))

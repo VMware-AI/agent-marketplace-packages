@@ -14,6 +14,11 @@ Type=simple
 #   /var/lib/agent-marketplace/dist           # bind-mounted dist/ (read-only)
 ExecStart=/usr/local/bin/marketplace-api --config /etc/agent-marketplace/config.yaml
 EnvironmentFile=/etc/agent-marketplace/env
+# Reload dist/ without restarting the process. The server reloads on
+# SIGHUP (also picked up by the in-process 10s poll loop, so manual
+# reload is optional). See deploy/systemd/README.md for the operator
+# workflow and internal/server/reload for the implementation.
+ExecReload=/bin/kill -HUP $MAINPID
 Restart=on-failure
 RestartSec=5
 # Hardening

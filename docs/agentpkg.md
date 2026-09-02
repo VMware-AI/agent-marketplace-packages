@@ -59,6 +59,12 @@ agentpkg login --server https://marketplace.example.com:8443 \
 agentpkg login --server https://...:8443 --password-stdin   <<< "$PW"
 # 或（agentpkg daemon 驱动）
 agentpkg login --server https://...:8443 --password "$MARKETPLACE_API_PASSWORD"
+
+# 自签名证书 / 私有 CA 场景：
+agentpkg login --server https://self-signed.example:8443 \
+               --password-file <(echo "$PW") --skip-cert-verify
+agentpkg login --server https://internal-ca.example:8443 \
+               --password-file <(echo "$PW") --ca-cert /etc/ssl/enterprise-ca.pem
 ```
 
 `--server` 写入配置；密码来源**互斥**（四选一）：
@@ -69,6 +75,13 @@ agentpkg login --server https://...:8443 --password "$MARKETPLACE_API_PASSWORD"
 - 都不传 — 交互提示（`/dev/tty`）
 
 成功后立即探测 `/api/v1/health` 验证连通。
+
+**TLS 选项**（持久化到 `config.yaml`，所有后续命令自动继承，无需再次传）：
+
+- `--skip-cert-verify` — 跳过 marketplace-api 的 TLS 证书校验。**不安全**：连接无法验证身份。仅用于一次性调试或自签名测试环境。启用时打印 `WARN: TLS certificate verification is disabled...` 到 stderr。
+- `--ca-cert <path>` — 自定义 PEM CA bundle。私有 PKI / 企业 CA 部署时使用；CA 路径会被存为绝对路径（避免 cd 改变工作目录后失效）。文件不存在或不是合法 PEM 时报错并退出，**不会写入 config.yaml**（避免留一个之后每次命令都失败的配置）。
+
+再次 `agentpkg login` 时若未显式传这些 flag，对应的 config 字段会被清掉——"最后一次 login 决定"的语义，方便操作员回滚到默认安全配置。
 
 ### `logout` —— 清除凭证
 
@@ -288,6 +301,10 @@ agentpkg package sign dist/opencode-upstream-1.18.9.tar.gz --key <GPG_KEY_ID>
 
 ```yaml
 server: "https://marketplace.example.com:8443"
+# 可选 —— 由 `agentpkg login --skip-cert-verify` 写入：
+skip_cert_verify: true
+# 可选 —— 由 `agentpkg login --ca-cert <path>` 写入（绝对路径）：
+ca_cert: "/etc/ssl/enterprise-ca.pem"
 ```
 
 `~/.config/agentpkg/credentials`：
@@ -297,6 +314,8 @@ password: <your-marketplace-api-password>
 ```
 
 二者在 `login` 时自动创建；前者 mode `0700`、后者 mode `0600`。
+
+`skip_cert_verify` / `ca_cert` 是可选的 TLS 行为配置，由 `login` 子命令设置并落盘。再次 `login` 时不传对应 flag 会清掉相应字段。`whoami` / `index` / `show` / `download` / `install` / `upgrade` / `rollback` 等所有需要走 marketplace-api 的命令都会自动使用这些设置，**无需在每个子命令上重复传 flag**。
 
 ---
 

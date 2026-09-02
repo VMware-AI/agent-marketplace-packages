@@ -8,8 +8,8 @@ import (
 
 // TestManifest_RoundTrip_FieldsPreserved verifies that encoding a Manifest
 // with full Services + Configs (schema 1.1) and decoding back yields equal
-// field values. This catches the silent-drop pattern that bit the
-// runtime_constraints/runtime_requirements field mismatch.
+// field values. This catches the silent-drop pattern that bit the old
+// runtime_requirements field mismatch.
 func TestManifest_RoundTrip_FieldsPreserved(t *testing.T) {
 	original := &Manifest{
 		SchemaVersion: "1.1",
@@ -109,7 +109,7 @@ func TestManifest_OneZero_BackwardCompat(t *testing.T) {
 		"source": "upstream",
 		"version": "0.0.55",
 		"channel": "stable",
-		"runtime_constraints": [],
+		"runtime_requirements": [],
 		"payload": [],
 		"checksums": {}
 	}`
@@ -138,7 +138,7 @@ func TestManifest_OneOne_NewFields(t *testing.T) {
 		"source": "upstream",
 		"version": "2026.7.1-2",
 		"channel": "stable",
-		"runtime_constraints": [],
+		"runtime_requirements": [],
 		"payload": [],
 		"checksums": {},
 		"services": [

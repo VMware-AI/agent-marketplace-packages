@@ -16,6 +16,7 @@ import (
 	"github.com/VMware-AI/agent-marketplace-packages/internal/apitypes"
 	"github.com/VMware-AI/agent-marketplace-packages/internal/repo"
 	"github.com/VMware-AI/agent-marketplace-packages/internal/server"
+	"github.com/VMware-AI/agent-marketplace-packages/internal/server/reload"
 	"gopkg.in/yaml.v3"
 )
 
@@ -73,6 +74,21 @@ func main() {
 		cfg.Logging.File = *logFile
 	}
 
+	// Poll interval for the dist/ reload loop. SIGHUP always works; the
+	// poll ticker is the automatic fallback for "operator forgot to send
+	// HUP" or container environments where sending HUP is awkward. Env
+	// override only (no YAML knob) — matches the convention for
+	// operational tunables documented in applyEnvOverrides.
+	pollInterval := 10 * time.Second
+	if v := os.Getenv("MARKETPLACE_API_POLL_INTERVAL"); v != "" {
+		d, err := time.ParseDuration(v)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "parse MARKETPLACE_API_POLL_INTERVAL=%q: %v\n", v, err)
+			os.Exit(1)
+		}
+		pollInterval = d
+	}
+
 	logger, closeLog, err := server.NewLogger(cfg.Logging.Level, cfg.Logging.Format, cfg.Logging.File)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "init logger: %v\n", err)
@@ -97,6 +113,12 @@ func main() {
 
 	dist := repo.NewDir(distDir)
 
+	// Capture the on-disk fingerprint BEFORE the initial load. If a reindex
+	// lands between this stat and the LoadIndex below, the initial load will
+	// pick up the new file — which is exactly what we want. See
+	// internal/server/reload for the rationale.
+	fp, _ := reload.InitialFingerprint(dist)
+
 	// Load + validate index.json at startup. Fail-fast: any error here
 	// means the dist/ directory is broken and we cannot serve traffic.
 	idx, err := dist.LoadIndex()
@@ -112,9 +134,10 @@ func main() {
 		"agents", len(idx.Agents),
 		"versions", totalVersions(idx),
 		"dist_dir", distDir,
+		"poll_interval", pollInterval.String(),
 	)
 
-	state := &server.State{Index: idx, Dist: dist}
+	state := server.NewState(dist, idx)
 	handler := server.NewRouter(state, password, logger)
 
 	srv := &http.Server{
@@ -124,9 +147,17 @@ func main() {
 		WriteTimeout:      60 * time.Second, // large enough for tarball streaming
 	}
 
-	// Graceful shutdown
+	// Graceful shutdown — SIGINT/SIGTERM only. SIGHUP is handled separately
+	// below as a reload trigger; adding it here would treat reload as a
+	// shutdown signal.
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer cancel()
+
+	// Reload trigger channel — SIGHUP wakes the reload goroutine for an
+	// immediate re-read. Buffered so a misbehaving sender can never block.
+	sighup := make(chan os.Signal, 1)
+	signal.Notify(sighup, syscall.SIGHUP)
+	defer signal.Stop(sighup)
 
 	go func() {
 		logger.Info("marketplace-api listening", "addr", cfg.Server.Listen)
@@ -143,12 +174,64 @@ func main() {
 		}
 	}()
 
+	// Reload coordinator — selects on shutdown, SIGHUP, and the poll
+	// ticker. pollInterval of 0 disables polling (SIGHUP-only).
+	go runReloadLoop(ctx, sighup, dist, state, &fp, pollInterval, logger)
+
 	<-ctx.Done()
 	logger.Info("shutting down")
 	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer shutdownCancel()
 	if err := srv.Shutdown(shutdownCtx); err != nil {
 		logger.Error("shutdown", "err", err)
+	}
+}
+
+// runReloadLoop selects on shutdown, SIGHUP, and (optionally) a poll
+// ticker. Each non-shutdown event triggers reload.MaybeReload, which
+// itself no-ops when nothing has changed. The function never panics on
+// reload failure — that's why we wire the loop in main rather than
+// letting reload errors tear the process down.
+func runReloadLoop(
+	ctx context.Context,
+	sighup <-chan os.Signal,
+	dist *repo.Dir,
+	state *server.State,
+	fp *reload.Fingerprint,
+	interval time.Duration,
+	logger *slog.Logger,
+) {
+	if interval <= 0 {
+		// SIGHUP-only mode.
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-sighup:
+				if err := reload.MaybeReload(state, dist, fp, logger); err != nil {
+					logger.Warn("manual reload", "err", err)
+				}
+			}
+		}
+	}
+
+	t := time.NewTicker(interval)
+	defer t.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-sighup:
+			if err := reload.MaybeReload(state, dist, fp, logger); err != nil {
+				logger.Warn("manual reload", "err", err)
+			}
+		case <-t.C:
+			if err := reload.MaybeReload(state, dist, fp, logger); err != nil {
+				// MaybeReload already logs the underlying error; this branch
+				// is here so future code can hook on persistent failures.
+				_ = err
+			}
+		}
 	}
 }
 

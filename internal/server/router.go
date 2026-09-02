@@ -3,6 +3,7 @@ package server
 import (
 	"log/slog"
 	"net/http"
+	"sync/atomic"
 	"time"
 
 	"github.com/VMware-AI/agent-marketplace-packages/internal/apitypes"
@@ -10,14 +11,37 @@ import (
 	"github.com/go-chi/chi/v5"
 )
 
-// State holds the shared state for HTTP handlers — currently just the
-// loaded index, which is set at startup and refreshed via SIGHUP (TODO).
+// State holds the shared state for HTTP handlers.
 //
-// The state is read-only after startup; reload.go creates a new *State
-// and atomically swaps it.
+// Index is swapped atomically by the reload path (see internal/server/reload):
+// readers see either the old or the new *Index, never a half-built one.
+// IMPORTANT: once an *apitypes.Index is published via SetIndex it MUST be
+// treated as immutable — readers iterate it without locks and rely on
+// atomic.Pointer.Load returning a stable pointer. Mutating a published
+// index in place will trip the race detector. To replace, construct a
+// fresh *apitypes.Index (e.g. via apitypes.ParseIndex) and Store it.
 type State struct {
-	Index *apitypes.Index
+	index atomic.Pointer[apitypes.Index]
 	Dist  *repo.Dir
+}
+
+// Index returns the currently-published index, or nil if none has been
+// loaded (initial startup race or a never-loaded misconfiguration).
+func (s *State) Index() *apitypes.Index { return s.index.Load() }
+
+// SetIndex atomically publishes a new index. The pointer is replaced
+// in one step so in-flight requests see either the old or the new
+// snapshot, never a torn read.
+func (s *State) SetIndex(idx *apitypes.Index) { s.index.Store(idx) }
+
+// NewState constructs a State with the given Dist and initial Index.
+// dist must be non-nil; idx may be nil (a reload will populate it).
+func NewState(dist *repo.Dir, idx *apitypes.Index) *State {
+	s := &State{Dist: dist}
+	if idx != nil {
+		s.SetIndex(idx)
+	}
+	return s
 }
 
 // NewRouter wires up the marketplace-api HTTP routes.
