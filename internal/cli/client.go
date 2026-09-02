@@ -1,6 +1,8 @@
 package cli
 
 import (
+	"crypto/tls"
+	"crypto/x509"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -30,16 +32,27 @@ func NewClient(configPath, credsPath string) (*Client, error) {
 	if err != nil {
 		return nil, fmt.Errorf("load credentials: %w", err)
 	}
+	httpClient, err := newHTTPClient(cfg.SkipCertVerify, cfg.CACert, 30*time.Second)
+	if err != nil {
+		return nil, err
+	}
+	if cfg.SkipCertVerify {
+		fmt.Fprintf(os.Stderr,
+			"WARN: TLS certificate verification is disabled (--skip-cert-verify from login) — connections to %s are not authenticated\n",
+			cfg.Server)
+	}
 	return &Client{
 		BaseURL:  strings.TrimRight(cfg.Server, "/"),
 		Password: password,
-		HTTP:     &http.Client{Timeout: 30 * time.Second},
+		HTTP:     httpClient,
 	}, nil
 }
 
 // configShape is the subset of config.yaml we care about.
 type configShape struct {
-	Server string `yaml:"server"`
+	Server         string `yaml:"server"`
+	SkipCertVerify bool   `yaml:"skip_cert_verify,omitempty"`
+	CACert         string `yaml:"ca_cert,omitempty"`
 }
 
 func loadConfig(path string) (*configShape, error) {
@@ -109,4 +122,47 @@ func (c *Client) do(path string, v any) error {
 // yamlUnmarshal is a thin wrapper to keep yaml imports localized.
 func yamlUnmarshal(data []byte, v any) error {
 	return yamlUnmarshalImpl(data, v)
+}
+
+// tlsConfig builds a *tls.Config honoring both skip-verify and a custom
+// CA bundle. Both can be set together (debug-mode + enterprise CA).
+//
+//   - skipVerify=true → InsecureSkipVerify: true (no chain validation)
+//   - caPath != ""    → load the PEM bundle and add it to RootCAs
+//
+// Returns an error when caPath is set but the file is missing or contains
+// no valid PEM certificates.
+func tlsConfig(skipVerify bool, caPath string) (*tls.Config, error) {
+	c := &tls.Config{InsecureSkipVerify: skipVerify}
+	if caPath == "" {
+		return c, nil
+	}
+	pem, err := os.ReadFile(caPath)
+	if err != nil {
+		return nil, fmt.Errorf("read CA bundle %s: %w", caPath, err)
+	}
+	pool := x509.NewCertPool()
+	if !pool.AppendCertsFromPEM(pem) {
+		return nil, fmt.Errorf("CA bundle %s: no valid PEM certificates", caPath)
+	}
+	c.RootCAs = pool
+	return c, nil
+}
+
+// newHTTPClient returns an *http.Client whose transport reflects the
+// operator's TLS choices. timeout is per-call (login uses 10s, the
+// persistent client used by whoami/index/show/download/etc. uses 30s).
+//
+// Errors from tlsConfig propagate — e.g. a CA bundle that fails to load
+// surfaces as a NewClient error rather than a confusing handshake failure
+// at the first HTTPS request.
+func newHTTPClient(skipVerify bool, caPath string, timeout time.Duration) (*http.Client, error) {
+	tc, err := tlsConfig(skipVerify, caPath)
+	if err != nil {
+		return nil, err
+	}
+	return &http.Client{
+		Timeout:   timeout,
+		Transport: &http.Transport{TLSClientConfig: tc},
+	}, nil
 }

@@ -1,10 +1,21 @@
 package cli
 
 import (
+	"crypto/ecdsa"
+	"crypto/elliptic"
+	"crypto/rand"
+	"crypto/x509"
+	"crypto/x509/pkix"
+	"encoding/pem"
+	"fmt"
+	"math/big"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 // TestLoadCredentials_RoundTrip writes a credentials file in the format
@@ -184,5 +195,372 @@ func TestLoginCmd_RejectsMultiplePasswordSources(t *testing.T) {
 		if !strings.Contains(err.Error(), "pass only one of") {
 			t.Errorf("args %v: error %q does not mention mutual-exclusion", args, err.Error())
 		}
+	}
+}
+
+// --- TLS flag tests ----------------------------------------------------
+
+// TestLoadConfig_ParsesTLSSettings writes a config.yaml containing both
+// new fields and verifies loadConfig populates them. The omitempty tags
+// on configShape must NOT swallow the bool=true / non-empty string on
+// the way back in.
+func TestLoadConfig_ParsesTLSSettings(t *testing.T) {
+	dir := t.TempDir()
+	p := filepath.Join(dir, "config.yaml")
+	caPath := "/etc/ssl/enterprise-ca.pem"
+	yaml := "server: https://marketplace.example.com\n" +
+		"skip_cert_verify: true\n" +
+		"ca_cert: " + caPath + "\n"
+	if err := os.WriteFile(p, []byte(yaml), 0600); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	cfg, err := loadConfig(p)
+	if err != nil {
+		t.Fatalf("loadConfig: %v", err)
+	}
+	if cfg.Server != "https://marketplace.example.com" {
+		t.Errorf("server: got %q", cfg.Server)
+	}
+	if !cfg.SkipCertVerify {
+		t.Errorf("SkipCertVerify: got false, want true")
+	}
+	if cfg.CACert != caPath {
+		t.Errorf("CACert: got %q, want %q", cfg.CACert, caPath)
+	}
+}
+
+// TestLoadConfig_TLSFieldsAbsent confirms a config with only `server:`
+// yields zero values for the new fields. Operators who have never
+// touched the TLS flags must not have their config suddenly interpreted
+// as insecure.
+func TestLoadConfig_TLSFieldsAbsent(t *testing.T) {
+	dir := t.TempDir()
+	p := filepath.Join(dir, "config.yaml")
+	if err := os.WriteFile(p, []byte("server: https://marketplace.example.com\n"), 0600); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	cfg, err := loadConfig(p)
+	if err != nil {
+		t.Fatalf("loadConfig: %v", err)
+	}
+	if cfg.SkipCertVerify {
+		t.Errorf("SkipCertVerify: got true, want false")
+	}
+	if cfg.CACert != "" {
+		t.Errorf("CACert: got %q, want \"\"", cfg.CACert)
+	}
+}
+
+// writeSelfSignedPEM builds a one-off ECDSA self-signed cert in memory,
+// encodes to PEM, and writes it to a temp file. Returns the path so the
+// caller can hand it to tlsConfig / --ca-cert.
+func writeSelfSignedPEM(t *testing.T) string {
+	t.Helper()
+	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		t.Fatalf("genkey: %v", err)
+	}
+	tmpl := x509.Certificate{
+		SerialNumber: big.NewInt(1),
+		Subject:      pkix.Name{CommonName: "agentpkg-test"},
+		NotBefore:    time.Now().Add(-time.Hour),
+		NotAfter:     time.Now().Add(time.Hour),
+		KeyUsage:     x509.KeyUsageCertSign,
+		IsCA:         true,
+	}
+	der, err := x509.CreateCertificate(rand.Reader, &tmpl, &tmpl, &key.PublicKey, key)
+	if err != nil {
+		t.Fatalf("createcert: %v", err)
+	}
+	p := filepath.Join(t.TempDir(), "ca.pem")
+	pemBytes := pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der})
+	if err := os.WriteFile(p, pemBytes, 0644); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	return p
+}
+
+// TestTLSConfig_LoadsPEMBundle generates a self-signed CA cert, hands
+// the PEM to tlsConfig, and asserts the returned *tls.Config has a
+// non-nil RootCAs. We don't introspect the pool directly — x509 doesn't
+// expose its contents — but the absence of an error and a populated
+// RootCAs field is sufficient.
+func TestTLSConfig_LoadsPEMBundle(t *testing.T) {
+	p := writeSelfSignedPEM(t)
+	tc, err := tlsConfig(false, p)
+	if err != nil {
+		t.Fatalf("tlsConfig: %v", err)
+	}
+	if tc.RootCAs == nil {
+		t.Errorf("RootCAs: got nil, want non-nil after loading %s", p)
+	}
+	if tc.InsecureSkipVerify {
+		t.Errorf("InsecureSkipVerify: got true, want false")
+	}
+}
+
+// TestTLSConfig_SkipVerify exercises the InsecureSkipVerify branch
+// without a CA path — the default RootCAs stays nil (system pool used
+// by Go's net/http anyway when TLSClientConfig.RootCAs is nil).
+func TestTLSConfig_SkipVerify(t *testing.T) {
+	tc, err := tlsConfig(true, "")
+	if err != nil {
+		t.Fatalf("tlsConfig: %v", err)
+	}
+	if !tc.InsecureSkipVerify {
+		t.Errorf("InsecureSkipVerify: got false, want true")
+	}
+}
+
+// TestTLSConfig_MissingFile confirms the helper fails clearly when the
+// path passed via --ca-cert doesn't resolve — a confusing handshake
+// error at the first HTTPS call is much harder to diagnose.
+func TestTLSConfig_MissingFile(t *testing.T) {
+	_, err := tlsConfig(false, filepath.Join(t.TempDir(), "no-such-ca.pem"))
+	if err == nil {
+		t.Error("expected error for missing CA file, got nil")
+	}
+}
+
+// TestTLSConfig_BadPEM confirms the helper rejects a file that exists
+// but doesn't contain valid PEM certificates — the AppendCertsFromPEM
+// bool result is surfaced as an error so a typo'd --ca-cert doesn't
+// silently fall back to system roots.
+func TestTLSConfig_BadPEM(t *testing.T) {
+	bad := filepath.Join(t.TempDir(), "garbage.pem")
+	if err := os.WriteFile(bad, []byte("not a certificate\n"), 0644); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	_, err := tlsConfig(false, bad)
+	if err == nil {
+		t.Error("expected error for bad PEM, got nil")
+	}
+}
+
+// TestNewClient_AppliesInsecureTransport writes a config with
+// skip_cert_verify: true, calls NewClient, and asserts the resulting
+// http.Client's transport is configured to skip TLS verification.
+func TestNewClient_AppliesInsecureTransport(t *testing.T) {
+	dir := t.TempDir()
+	cfgPath := filepath.Join(dir, "config.yaml")
+	credsPath := filepath.Join(dir, "creds")
+	if err := os.WriteFile(cfgPath, []byte("server: https://marketplace.example.com\nskip_cert_verify: true\n"), 0600); err != nil {
+		t.Fatalf("write cfg: %v", err)
+	}
+	if err := os.WriteFile(credsPath, []byte("password: x\n"), 0600); err != nil {
+		t.Fatalf("write creds: %v", err)
+	}
+	c, err := NewClient(cfgPath, credsPath)
+	if err != nil {
+		t.Fatalf("NewClient: %v", err)
+	}
+	tr, ok := c.HTTP.Transport.(*http.Transport)
+	if !ok {
+		t.Fatalf("HTTP.Transport: got %T, want *http.Transport", c.HTTP.Transport)
+	}
+	if tr.TLSClientConfig == nil || !tr.TLSClientConfig.InsecureSkipVerify {
+		t.Errorf("InsecureSkipVerify: got %v, want true", tr.TLSClientConfig)
+	}
+}
+
+// TestNewClient_AppliesCACert writes a config with ca_cert, calls
+// NewClient, and asserts the transport has a populated RootCAs pool.
+// We don't compare cert contents (x509 doesn't expose them) — the
+// "non-nil after config-driven load" assertion is sufficient.
+func TestNewClient_AppliesCACert(t *testing.T) {
+	dir := t.TempDir()
+	cfgPath := filepath.Join(dir, "config.yaml")
+	credsPath := filepath.Join(dir, "creds")
+	caPath := writeSelfSignedPEM(t)
+	yaml := "server: https://marketplace.example.com\nca_cert: " + caPath + "\n"
+	if err := os.WriteFile(cfgPath, []byte(yaml), 0600); err != nil {
+		t.Fatalf("write cfg: %v", err)
+	}
+	if err := os.WriteFile(credsPath, []byte("password: x\n"), 0600); err != nil {
+		t.Fatalf("write creds: %v", err)
+	}
+	c, err := NewClient(cfgPath, credsPath)
+	if err != nil {
+		t.Fatalf("NewClient: %v", err)
+	}
+	tr, ok := c.HTTP.Transport.(*http.Transport)
+	if !ok {
+		t.Fatalf("HTTP.Transport: got %T, want *http.Transport", c.HTTP.Transport)
+	}
+	if tr.TLSClientConfig == nil {
+		t.Fatalf("TLSClientConfig: got nil")
+	}
+	if tr.TLSClientConfig.RootCAs == nil {
+		t.Errorf("RootCAs: got nil, want non-nil after loading %s", caPath)
+	}
+}
+
+// TestLoginCmd_PersistsSkipCertVerify exercises the cobra command end-
+// to-end: pass --skip-cert-verify, point --server at an httptest server
+// (with no TLS — we skip verify to prove the flag was honored), and
+// assert the written config.yaml contains skip_cert_verify: true.
+//
+// This is the integration test for "flag → config.yaml" round-tripping.
+func TestLoginCmd_PersistsSkipCertVerify(t *testing.T) {
+	dir := t.TempDir()
+	cfgPath := filepath.Join(dir, "config.yaml")
+	credsPath := filepath.Join(dir, "creds")
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/api/v1/health" {
+			w.WriteHeader(http.StatusOK)
+			_, _ = fmt.Fprint(w, `{"status":"ok","version":"test"}`)
+			return
+		}
+		http.NotFound(w, r)
+	}))
+	t.Cleanup(srv.Close)
+
+	cmd := NewLoginCmd(&cfgPath, &credsPath)
+	cmd.SetArgs([]string{
+		"--server", srv.URL,
+		"--password", "x",
+		"--skip-cert-verify",
+	})
+	cmd.SetOut(&strings.Builder{})
+	cmd.SetErr(&strings.Builder{})
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("login: %v", err)
+	}
+
+	cfgBytes, err := os.ReadFile(cfgPath)
+	if err != nil {
+		t.Fatalf("read cfg: %v", err)
+	}
+	if !strings.Contains(string(cfgBytes), "skip_cert_verify: true") {
+		t.Errorf("config.yaml missing skip_cert_verify: true; got:\n%s", cfgBytes)
+	}
+}
+
+// TestLoginCmd_ReloginClearsTLS confirms the "last login wins" semantic:
+// a second login without --skip-cert-verify clears the flag from
+// config.yaml so an operator can return to a hardened default.
+func TestLoginCmd_ReloginClearsTLS(t *testing.T) {
+	dir := t.TempDir()
+	cfgPath := filepath.Join(dir, "config.yaml")
+	credsPath := filepath.Join(dir, "creds")
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/api/v1/health" {
+			w.WriteHeader(http.StatusOK)
+			return
+		}
+		http.NotFound(w, r)
+	}))
+	t.Cleanup(srv.Close)
+
+	// First login with the flag set.
+	cmd1 := NewLoginCmd(&cfgPath, &credsPath)
+	cmd1.SetArgs([]string{"--server", srv.URL, "--password", "x", "--skip-cert-verify"})
+	cmd1.SetOut(&strings.Builder{})
+	cmd1.SetErr(&strings.Builder{})
+	if err := cmd1.Execute(); err != nil {
+		t.Fatalf("first login: %v", err)
+	}
+
+	// Second login without it.
+	cmd2 := NewLoginCmd(&cfgPath, &credsPath)
+	cmd2.SetArgs([]string{"--server", srv.URL, "--password", "x"})
+	cmd2.SetOut(&strings.Builder{})
+	cmd2.SetErr(&strings.Builder{})
+	if err := cmd2.Execute(); err != nil {
+		t.Fatalf("second login: %v", err)
+	}
+
+	cfgBytes, err := os.ReadFile(cfgPath)
+	if err != nil {
+		t.Fatalf("read cfg: %v", err)
+	}
+	if strings.Contains(string(cfgBytes), "skip_cert_verify") {
+		t.Errorf("config.yaml still contains skip_cert_verify after re-login without flag; got:\n%s", cfgBytes)
+	}
+}
+
+// TestLoginCmd_BadCACertFailsBeforeWrite asserts that a --ca-cert path
+// pointing at a malformed PEM produces a clear error AND does NOT
+// write a config file — operators must not end up with a config that
+// later fails every command.
+func TestLoginCmd_BadCACertFailsBeforeWrite(t *testing.T) {
+	dir := t.TempDir()
+	cfgPath := filepath.Join(dir, "config.yaml")
+	credsPath := filepath.Join(dir, "creds")
+	bad := filepath.Join(dir, "garbage.pem")
+	if err := os.WriteFile(bad, []byte("not a certificate\n"), 0644); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	cmd := NewLoginCmd(&cfgPath, &credsPath)
+	cmd.SetArgs([]string{
+		"--server", "https://marketplace.example.com",
+		"--password", "x",
+		"--ca-cert", bad,
+	})
+	cmd.SetOut(&strings.Builder{})
+	cmd.SetErr(&strings.Builder{})
+	err := cmd.Execute()
+	if err == nil {
+		t.Fatal("expected error for bad CA bundle, got nil")
+	}
+	if !strings.Contains(err.Error(), "CA bundle") {
+		t.Errorf("error %q does not mention CA bundle", err.Error())
+	}
+	if _, err := os.Stat(cfgPath); !os.IsNotExist(err) {
+		t.Errorf("config.yaml should not be written on CA failure; stat err = %v", err)
+	}
+}
+
+// TestLoginCmd_PersistsCACert exercises the cobra command with
+// --ca-cert: the PEM path is written to config.yaml as an absolute
+// path (so cd'ing later doesn't break it) and the actual file contents
+// are not read by doLogin's HTTP probe — validation already happened
+// in RunE.
+func TestLoginCmd_PersistsCACert(t *testing.T) {
+	dir := t.TempDir()
+	cfgPath := filepath.Join(dir, "config.yaml")
+	credsPath := filepath.Join(dir, "creds")
+	caPath := writeSelfSignedPEM(t)
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/api/v1/health" {
+			w.WriteHeader(http.StatusOK)
+			return
+		}
+		http.NotFound(w, r)
+	}))
+	t.Cleanup(srv.Close)
+
+	cmd := NewLoginCmd(&cfgPath, &credsPath)
+	cmd.SetArgs([]string{
+		"--server", srv.URL,
+		"--password", "x",
+		"--ca-cert", caPath,
+	})
+	cmd.SetOut(&strings.Builder{})
+	cmd.SetErr(&strings.Builder{})
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("login: %v", err)
+	}
+
+	cfgBytes, err := os.ReadFile(cfgPath)
+	if err != nil {
+		t.Fatalf("read cfg: %v", err)
+	}
+	if !strings.Contains(string(cfgBytes), "ca_cert:") {
+		t.Errorf("config.yaml missing ca_cert entry; got:\n%s", cfgBytes)
+	}
+	// The path in config must be absolute so cd doesn't break it later.
+	line := ""
+	for _, l := range strings.Split(string(cfgBytes), "\n") {
+		if strings.HasPrefix(l, "ca_cert:") {
+			line = strings.TrimSpace(strings.TrimPrefix(l, "ca_cert:"))
+			break
+		}
+	}
+	if line == "" || !filepath.IsAbs(line) {
+		t.Errorf("ca_cert in config is not absolute: %q", line)
 	}
 }

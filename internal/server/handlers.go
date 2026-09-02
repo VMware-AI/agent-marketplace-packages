@@ -20,23 +20,23 @@ func HandleHealth(w http.ResponseWriter, r *http.Request) {
 // Auth required.
 func HandleIndex(s *State) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		if s.Index == nil {
+		if s.Index() == nil {
 			writeError(w, http.StatusServiceUnavailable, "no_index", "index.json not loaded yet")
 			return
 		}
-		writeJSON(w, http.StatusOK, s.Index.Strip())
+		writeJSON(w, http.StatusOK, s.Index().Strip())
 	}
 }
 
 // HandleAgent returns one agent's full metadata + all versions (with manifests).
 func HandleAgent(s *State) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		if s.Index == nil {
+		if s.Index() == nil {
 			writeError(w, http.StatusServiceUnavailable, "no_index", "index.json not loaded yet")
 			return
 		}
 		name := chi.URLParam(r, "name")
-		for _, a := range s.Index.Agents {
+		for _, a := range s.Index().Agents {
 			if a.Name == name {
 				writeJSON(w, http.StatusOK, a)
 				return
@@ -49,14 +49,14 @@ func HandleAgent(s *State) http.HandlerFunc {
 // HandleManifest returns the full technical manifest.json for one (name, source, version).
 func HandleManifest(s *State) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		if s.Index == nil {
+		if s.Index() == nil {
 			writeError(w, http.StatusServiceUnavailable, "no_index", "index.json not loaded yet")
 			return
 		}
 		name := chi.URLParam(r, "name")
 		source := chi.URLParam(r, "source")
 		version := chi.URLParam(r, "version")
-		for _, a := range s.Index.Agents {
+		for _, a := range s.Index().Agents {
 			if a.Name != name {
 				continue
 			}
@@ -75,7 +75,7 @@ func HandleManifest(s *State) http.HandlerFunc {
 // HandleTarball streams the tarball bytes for one (name, source, version).
 func HandleTarball(s *State) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		if s.Index == nil || s.Dist == nil {
+		if s.Index() == nil || s.Dist == nil {
 			writeError(w, http.StatusServiceUnavailable, "no_index", "index.json not loaded yet")
 			return
 		}
@@ -99,7 +99,7 @@ func HandleTarball(s *State) http.HandlerFunc {
 // Format matches `sha256sum` output: "<hex>  <filename>".
 func HandleSHA256(s *State) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		if s.Index == nil || s.Dist == nil {
+		if s.Index() == nil || s.Dist == nil {
 			writeError(w, http.StatusServiceUnavailable, "no_index", "index.json not loaded yet")
 			return
 		}
@@ -127,14 +127,14 @@ func HandleSHA256(s *State) http.HandlerFunc {
 // or for clients that want to skip manifest-stripping.
 func HandleRawIndex(s *State) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		if s.Index == nil {
+		if s.Index() == nil {
 			writeError(w, http.StatusServiceUnavailable, "no_index", "index.json not loaded yet")
 			return
 		}
 		w.Header().Set("Content-Type", "application/json; charset=utf-8")
 		// Re-serialize from in-memory state. (Could also just serve the file
 		// from disk, but in-memory is consistent with what other handlers see.)
-		writeJSON(w, http.StatusOK, s.Index)
+		writeJSON(w, http.StatusOK, s.Index())
 	}
 }
 
@@ -149,14 +149,14 @@ func HandleRawIndex(s *State) http.HandlerFunc {
 // without a separate /manifest call).
 func HandleConfigSchema(s *State) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		if s.Index == nil {
+		if s.Index() == nil {
 			writeError(w, http.StatusServiceUnavailable, "no_index", "index.json not loaded yet")
 			return
 		}
 		name := chi.URLParam(r, "name")
 		source := chi.URLParam(r, "source")
 		version := chi.URLParam(r, "version")
-		for _, a := range s.Index.Agents {
+		for _, a := range s.Index().Agents {
 			if a.Name != name {
 				continue
 			}
@@ -180,7 +180,7 @@ func HandleConfigSchema(s *State) http.HandlerFunc {
 
 // findTarball looks up a single version entry across the index.
 func findTarball(s *State, name, source, version string) (apitypes.TarballRef, bool) {
-	for _, a := range s.Index.Agents {
+	for _, a := range s.Index().Agents {
 		if a.Name != name {
 			continue
 		}

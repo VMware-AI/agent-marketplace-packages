@@ -90,16 +90,20 @@ logging:
 
 ## dist/ 更新
 
-marketplace-api 运行时**只读** `dist/`。新版本 tarball 加入后必须重启：
+marketplace-api 运行时**只读** `dist/`。`agentpkg reindex` 把新的 tarball + `index.json` 写到 dist/ 之后，**无需重启服务**——server 内部每 10s 自动 stat `dist/index.json`，发现 mtime 或 size 变化就重新加载。也支持手动 reload：
 
 ```bash
 # 1. 拷新 tarball 进 /srv/agent-marketplace/dist/
 cp /path/to/new.tar.gz /srv/agent-marketplace/dist/
 # 2. 重生 index
 agentpkg package reindex --out /srv/agent-marketplace/dist
-# 3. 重启服务读到新 index
-sudo systemctl restart marketplace-api
+# 3. 立即生效（可选——poll loop 默认 10s 也会自动捡起来）
+sudo systemctl reload marketplace-api
+# 或不用 systemd：
+#   kill -HUP $(pgrep -f marketplace-api)
 ```
+
+reload 失败（旧 index 坏了）服务继续返回旧数据并在 journald 打 WARN，绝不 crash。轮询间隔可通过 `MARKETPLACE_API_POLL_INTERVAL=0` 关闭（只保留 SIGHUP）。
 
 ## 与 docker 路径的取舍
 
@@ -134,4 +138,9 @@ journalctl -u marketplace-api -e | grep -i password
 
 **Q: 怎么 reload dist 而不重启？**
 
-marketplace-api 当前**不支持** SIGHUP reload（见 [internal/server/reload/](../../internal/server/reload/) 这个空目录——它是为该功能预留的）。dist 变更需重启。
+支持，详见上文 "## dist/ 更新"。两种触发：
+
+- **自动**：server 每 10s 一次 stat `dist/index.json`，mtime 或 size 变化即 reload。`agentpkg reindex` 之后最多等 10s 即可。
+- **手动**：`sudo systemctl reload marketplace-api`（unit 里有 `ExecReload=/bin/kill -HUP $MAINPID`）或 `kill -HUP <pid>`。
+
+reload 失败不影响在线服务，旧数据继续返回。
