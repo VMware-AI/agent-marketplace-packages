@@ -1104,6 +1104,21 @@ func runInstallScript(tarballPath, targetRoot, version string, _ bool) error {
 }
 
 func execScript(path string, env []string) error {
+	// Defense in depth: ensure the script is executable before exec.Command.
+	//
+	// The upstream ``addFileToTar`` (cmd/agentpkg/internal/cli/packagecmd/build.go)
+	// hardcoded Mode: 0644 for every file in the tarball, which silently strips
+	// the +x bit from install.sh / uninstall.sh / render-config.sh even when
+	// the package author chmod +x'd them on disk before packaging. The kernel
+	// then refuses execve() with EACCES, and the agent install fails with
+	// ``fork/exec .../install.sh: permission denied`` even though the script
+	// content is valid. Re-applying 0755 here makes the consumer robust
+	// against any packaged tarball — old and new, correct and buggy.
+	if err := os.Chmod(path, 0o755); err != nil {
+		// Read-only mount or similar: surface the error so we don't silently
+		// fall through to the EACCES the chmod was meant to prevent.
+		return fmt.Errorf("chmod +x %s: %w", path, err)
+	}
 	cmd := exec.Command(path)
 	cmd.Env = append(os.Environ(), env...)
 	cmd.Stdout = os.Stdout

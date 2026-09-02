@@ -7,7 +7,6 @@ import (
 	"io"
 	"os"
 	"path/filepath"
-	"strings"
 
 	"github.com/spf13/cobra"
 )
@@ -212,7 +211,18 @@ func addFileToTar(tw *tar.Writer, srcPath, nameInTar string) error {
 	if err != nil {
 		return err
 	}
-	hdr := &tar.Header{Name: nameInTar, Mode: 0644, Size: fi.Size(), Typeflag: tar.TypeReg}
+	// Preserve the file's mode bits. The previous version hardcoded
+	// Mode: 0644 here, which silently stripped the +x bit from shell
+	// scripts (install.sh / uninstall.sh / render-config.sh) and from
+	// shipped binaries (bin/<name>). The kernel would then refuse
+	// execve() at install time with EACCES — the install would fail
+	// with ``fork/exec .../install.sh: permission denied`` even though
+	// the script content was fine. The consumer also runs ``chmod 0755``
+	// at exec time as defense in depth (cmd/agentpkg/internal/cli/install.go
+	// ``execScript``); preserving the mode here keeps the tarball honest
+	// from the start and lets ``tar -tvf`` show meaningful modes.
+	mode := fi.Mode().Perm()
+	hdr := &tar.Header{Name: nameInTar, Mode: int64(mode), Size: fi.Size(), Typeflag: tar.TypeReg}
 	if err := tw.WriteHeader(hdr); err != nil {
 		return err
 	}
@@ -221,7 +231,7 @@ func addFileToTar(tw *tar.Writer, srcPath, nameInTar string) error {
 }
 
 // addDirToTar walks a directory and adds all regular files to the archive,
-// preserving relative paths.
+// preserving relative paths inside the version dir.
 func addDirToTar(tw *tar.Writer, baseDir, prefix string) error {
 	return filepath.Walk(baseDir, func(path string, info os.FileInfo, err error) error {
 		if err != nil {
@@ -239,14 +249,18 @@ func addDirToTar(tw *tar.Writer, baseDir, prefix string) error {
 		if rel == "manifest.json" || rel == "meta.yaml" {
 			return nil
 		}
+		// Preserve rel verbatim. The earlier ``Strip "upstream/0.1.0/"``
+		// logic dropped the first path component unconditionally, which
+		// collapsed ``payload/bin/opencode`` → ``bin/opencode`` and
+		// produced a tarball whose layout did not match the manifest's
+		// ``checksums["payload/bin/opencode"]`` keys. install.sh then
+		// exited 30 with "manifest references 'payload/bin/opencode'
+		// but it is not present". The baseDir is already the version
+		// directory (see buildOne's payloadDir), so ``rel`` IS the path
+		// the manifest expects inside the tarball.
 		nameInTar := rel
 		if prefix != "" {
 			nameInTar = prefix + "/" + rel
-		}
-		// Strip "upstream/0.1.0/" prefix — the tarball root IS the version dir.
-		parts := strings.SplitN(rel, string(os.PathSeparator), 2)
-		if len(parts) == 2 {
-			nameInTar = parts[1]
 		}
 		return addFileToTar(tw, path, nameInTar)
 	})
