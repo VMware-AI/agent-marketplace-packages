@@ -189,6 +189,36 @@ if [[ $RC -ne 0 ]] || [[ -z "$VERSION_OUTPUT" ]]; then
 fi
 ok "verified: $VERSION_OUTPUT"
 
+# --- 11.5. default config (no --config-input path) -----------------------------
+# When ``agentpkg install`` is invoked WITHOUT ``--config-input``, the runner
+# skips ``render-config.sh`` entirely — and the gateway refuses to start
+# without ``~/.openclaw/openclaw.json`` (``Missing config. Run `openclaw setup`
+# or set gateway.mode=local``). The user-visible workaround was to add
+# ``--allow-unconfigured`` to the systemd unit, which suppresses the
+# enforcement but doesn't actually leave a usable config on disk.
+#
+# Render a minimal config here so a default install is runnable out of the
+# box: the gateway boots into ``gateway.mode=local`` and an operator can
+# populate providers / auth later via the webadmin (which calls
+# ``render-config.sh`` with full ``--config-input``). If the config file
+# already exists (because render-config.sh ran earlier in this install or a
+# previous install left one), leave it alone — we never overwrite an
+# operator-authored config.
+log "checking for rendered config at $HOME/.openclaw/openclaw.json ..."
+mkdir -p "$HOME/.openclaw"
+DEFAULT_CFG="$HOME/.openclaw/openclaw.json"
+if [[ ! -f "$DEFAULT_CFG" ]]; then
+  TMP_CFG="$(mktemp -t openclaw-default-cfg.XXXXXX)"
+  trap 'rm -f "$TMP_CFG"' EXIT
+  jq -n '{gateway: {mode: "local"}}' > "$TMP_CFG"
+  install -m 0600 "$TMP_CFG" "$DEFAULT_CFG"
+  rm -f "$TMP_CFG"
+  trap - EXIT
+  ok "  wrote minimal default config: $DEFAULT_CFG (gateway.mode=local; provider/auth empty)"
+else
+  ok "  config already present at $DEFAULT_CFG — leaving as-is"
+fi
+
 # --- 12. write state ----------------------------------------------------------
 NOW=$(date -u +%Y-%m-%dT%H:%M:%SZ)
 
@@ -208,6 +238,30 @@ if [[ -f "$STATE_FILE" ]]; then
   PREV_STATE_JSON=$(jq -c 'del(.installed_at)' "$STATE_FILE" 2>/dev/null || echo "{}")
 fi
 
+# Mirror manifest.services[] and manifest.configs[] into state.json so
+# uninstall (run by `agentpkg uninstall` OR by hand) can find the systemd
+# --user unit + rendered config to remove. Without these, an install done
+# by running this script directly — without `agentpkg install` writing
+# them post-install — would leave ~/.openclaw/ and
+# ~/.config/systemd/user/openclaw-gateway.service behind on uninstall.
+#
+# The unit_path is computed the same way the CLI's writeSystemdUserUnit
+# does: $HOME/.config/systemd/user/<agent>-<svc.name>.service.
+SERVICES_JSON=$(jq -c --arg agent "$AGENT" --arg home "$HOME" '
+    .services // [] | map({
+        name: .name,
+        unit_path: ($home + "/.config/systemd/user/" + $agent + "-" + .name + ".service"),
+        started: false
+    })
+' manifest.json)
+CONFIGS_JSON=$(jq -c '
+    .configs // [] | map({
+        name: .name,
+        render_to: .render_to,
+        mode: .mode
+    })
+' manifest.json)
+
 jq -n \
   --arg agent "$AGENT" \
   --arg source "$SOURCE_TREE" \
@@ -217,6 +271,8 @@ jq -n \
   --arg target_root "$TARGET_ROOT" \
   --arg installed_version "$VERSION_OUTPUT" \
   --argjson installed_files "$(printf '%s\n' "${INSTALLED_FILES[@]}" | jq -R . | jq -s .)" \
+  --argjson services "$SERVICES_JSON" \
+  --argjson configs "$CONFIGS_JSON" \
   --arg installed_at "$NOW" \
   --arg manifest_sha256 "$(sha256sum manifest.json | awk '{print $1}')" \
   --arg runtime_node_version "v$NODE_ACTUAL" \
@@ -230,6 +286,8 @@ jq -n \
     target_root: $target_root,
     installed_version: $installed_version,
     installed_files: $installed_files,
+    services: $services,
+    configs: $configs,
     manifest_sha256: $manifest_sha256,
     installed_at: $installed_at,
     runtime: { node: $runtime_node_version },

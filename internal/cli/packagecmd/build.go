@@ -230,6 +230,37 @@ func addFileToTar(tw *tar.Writer, srcPath, nameInTar string) error {
 	return err
 }
 
+// addSymlinkToTar writes a symbolic link to the archive, preserving the link
+// target verbatim instead of dereferencing to the target's content.
+//
+// ``filepath.Walk`` reports symlinks via the same FileInfo channel as regular
+// files (with ``Mode()&os.ModeSymlink`` set), so the only place to detect
+// them is here in the walk callback. ``addFileToTar``'s ``os.Open`` follows
+// symlinks — fine for regular files, but for a symlink it transparently
+// reads the TARGET file's content and writes it under a regular-file tar
+// header, which destroys the link at extract time. On install, the
+// launcher's ``import.meta.url`` then fails to resolve ``./dist/entry.js``
+// because the launcher is no longer the npm-style symlink that lives next
+// to the package's ``lib/`` directory.
+//
+// We preserve the symlink as ``tar.TypeSymlink`` with the original
+// ``Linkname`` (relative path). On extract, the consumer's ``tar -xzf``
+// recreates the link, and the launcher's ``import.meta.url`` resolves into
+// the package directory as the original npm layout intended.
+func addSymlinkToTar(tw *tar.Writer, srcPath, nameInTar string) error {
+	target, err := os.Readlink(srcPath)
+	if err != nil {
+		return fmt.Errorf("readlink %s: %w", srcPath, err)
+	}
+	hdr := &tar.Header{
+		Name:     nameInTar,
+		Linkname: target,
+		Mode:     0o777,
+		Typeflag: tar.TypeSymlink,
+	}
+	return tw.WriteHeader(hdr)
+}
+
 // addDirToTar walks a directory and adds all regular files to the archive,
 // preserving relative paths inside the version dir.
 func addDirToTar(tw *tar.Writer, baseDir, prefix string) error {
@@ -239,6 +270,21 @@ func addDirToTar(tw *tar.Writer, baseDir, prefix string) error {
 		}
 		if info.IsDir() {
 			return nil
+		}
+		// Handle symlinks BEFORE delegating to addFileToTar — the latter
+		// dereferences via os.Open and would otherwise emit a regular-file
+		// header carrying the target's content (see addSymlinkToTar's
+		// doc comment for the failure mode this prevents).
+		if info.Mode()&os.ModeSymlink != 0 {
+			rel, relErr := filepath.Rel(baseDir, path)
+			if relErr != nil {
+				return relErr
+			}
+			nameInTar := rel
+			if prefix != "" {
+				nameInTar = prefix + "/" + rel
+			}
+			return addSymlinkToTar(tw, path, nameInTar)
 		}
 		rel, err := filepath.Rel(baseDir, path)
 		if err != nil {
