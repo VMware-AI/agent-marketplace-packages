@@ -28,7 +28,10 @@ type Agent struct {
 	Logo     string    `json:"logo"`
 	Category string    `json:"category"`
 	Tags     []string  `json:"tags"`
-	Versions []Version `json:"versions"`
+	// RuntimeType is the deployment target declared in meta.yaml
+	// (vm / container / k8s). Stable across all versions of the agent.
+	RuntimeType string    `json:"runtime_type"`
+	Versions    []Version `json:"versions"`
 }
 
 // Version is one entry under Agent.Versions.
@@ -202,6 +205,7 @@ type AgentStripped struct {
 	Logo        string            `json:"logo"`
 	Category    string            `json:"category"`
 	Tags        []string          `json:"tags"`
+	RuntimeType string            `json:"runtime_type"`
 	Versions    []VersionStripped `json:"versions"`
 }
 
@@ -229,6 +233,7 @@ func (idx *Index) Strip() *IndexStripped {
 			Logo:        a.Logo,
 			Category:    a.Category,
 			Tags:        a.Tags,
+			RuntimeType: a.RuntimeType,
 			Versions:    make([]VersionStripped, 0, len(a.Versions)),
 		}
 		for _, v := range a.Versions {

@@ -189,6 +189,69 @@ if [[ $RC -ne 0 ]] || [[ -z "$VERSION_OUTPUT" ]]; then
 fi
 ok "verified: $VERSION_OUTPUT"
 
+# --- 11.5. default config (no --config-input path) -----------------------------
+# When ``agentpkg install`` is invoked WITHOUT ``--config-input``, the runner
+# skips ``render-config.sh`` entirely — and the gateway refuses to start
+# without ``~/.openclaw/openclaw.json`` (``Missing config. Run `openclaw setup`
+# or set gateway.mode=local``). The user-visible workaround was to add
+# ``--allow-unconfigured`` to the systemd unit, which suppresses the
+# enforcement but doesn't actually leave a usable config on disk.
+#
+# Render a sensible default here so a default install is runnable out of
+# the box. The fields below match the canonical deployment: gateway sits
+# behind a TLS-terminating reverse proxy on the same host, and the proxy
+# enforces cookie-session auth on every request — the gateway itself runs
+# unauthenticated + loopback-only + wildcard-origin. Operators exposing
+# the gateway directly should override ``bind`` to ``lan``/``tailnet`` and
+# re-enable ``auth.mode`` + tighten ``allowedOrigins``.
+#
+#   * ``mode=local``: required to start without ``--allow-unconfigured``.
+#   * ``bind=loopback``: only listen on 127.0.0.1; the reverse proxy is
+#     the only path to the gateway. Loopback-only is what makes the
+#     wildcard-origin below safe (only same-host processes can reach the
+#     gateway WS port).
+#   * ``controlUi.allowedOrigins=["*"]``: openclaw refuses browser WS
+#     connections whose ``Origin`` isn't in this list. The proxy serves
+#     the page at ``https://<host>/``, so the browser Origin is the host
+#     itself — there's no way to predict it at tarball-build time, and
+#     any value we pick here would break every other install. Wildcard
+#     is acceptable because bind is loopback.
+#   * ``auth.mode=none``: the reverse proxy already enforces cookie auth
+#     on every request. Re-enabling gateway auth would double-prompt for
+#     credentials the browser dashboard can't supply, and break the WS
+#     handshake (``reason=token_missing``) on every page load.
+#   * ``trustedProxies=127.0.0.1/32,::1/128``: the proxy forwards
+#     X-Forwarded-* from the same host. Without this allowlist the
+#     gateway logs ``Proxy headers detected from untrusted address`` on
+#     every WS frame and treats the connection as remote (affecting
+#     device-pairing / local-client detection).
+#
+# If the config file already exists (because render-config.sh ran earlier
+# in this install or a previous install left one), leave it alone — we
+# never overwrite an operator-authored config.
+log "checking for rendered config at $HOME/.openclaw/openclaw.json ..."
+mkdir -p "$HOME/.openclaw"
+DEFAULT_CFG="$HOME/.openclaw/openclaw.json"
+if [[ ! -f "$DEFAULT_CFG" ]]; then
+  TMP_CFG="$(mktemp -t openclaw-default-cfg.XXXXXX)"
+  trap 'rm -f "$TMP_CFG"' EXIT
+  jq -n '{
+    gateway: {
+      mode: "local",
+      bind: "loopback",
+      controlUi: { allowedOrigins: ["*"] },
+      auth: { mode: "none" },
+      trustedProxies: ["127.0.0.1/32", "::1/128"]
+    }
+  }' > "$TMP_CFG"
+  install -m 0600 "$TMP_CFG" "$DEFAULT_CFG"
+  rm -f "$TMP_CFG"
+  trap - EXIT
+  ok "  wrote default config: $DEFAULT_CFG (mode=local; loopback bind; wildcard origin; auth off — intended for behind-proxy deployments)"
+else
+  ok "  config already present at $DEFAULT_CFG — leaving as-is"
+fi
+
 # --- 12. write state ----------------------------------------------------------
 NOW=$(date -u +%Y-%m-%dT%H:%M:%SZ)
 
@@ -208,6 +271,30 @@ if [[ -f "$STATE_FILE" ]]; then
   PREV_STATE_JSON=$(jq -c 'del(.installed_at)' "$STATE_FILE" 2>/dev/null || echo "{}")
 fi
 
+# Mirror manifest.services[] and manifest.configs[] into state.json so
+# uninstall (run by `agentpkg uninstall` OR by hand) can find the systemd
+# --user unit + rendered config to remove. Without these, an install done
+# by running this script directly — without `agentpkg install` writing
+# them post-install — would leave ~/.openclaw/ and
+# ~/.config/systemd/user/openclaw-gateway.service behind on uninstall.
+#
+# The unit_path is computed the same way the CLI's writeSystemdUserUnit
+# does: $HOME/.config/systemd/user/<agent>-<svc.name>.service.
+SERVICES_JSON=$(jq -c --arg agent "$AGENT" --arg home "$HOME" '
+    .services // [] | map({
+        name: .name,
+        unit_path: ($home + "/.config/systemd/user/" + $agent + "-" + .name + ".service"),
+        started: false
+    })
+' manifest.json)
+CONFIGS_JSON=$(jq -c '
+    .configs // [] | map({
+        name: .name,
+        render_to: .render_to,
+        mode: .mode
+    })
+' manifest.json)
+
 jq -n \
   --arg agent "$AGENT" \
   --arg source "$SOURCE_TREE" \
@@ -217,6 +304,8 @@ jq -n \
   --arg target_root "$TARGET_ROOT" \
   --arg installed_version "$VERSION_OUTPUT" \
   --argjson installed_files "$(printf '%s\n' "${INSTALLED_FILES[@]}" | jq -R . | jq -s .)" \
+  --argjson services "$SERVICES_JSON" \
+  --argjson configs "$CONFIGS_JSON" \
   --arg installed_at "$NOW" \
   --arg manifest_sha256 "$(sha256sum manifest.json | awk '{print $1}')" \
   --arg runtime_node_version "v$NODE_ACTUAL" \
@@ -230,6 +319,8 @@ jq -n \
     target_root: $target_root,
     installed_version: $installed_version,
     installed_files: $installed_files,
+    services: $services,
+    configs: $configs,
     manifest_sha256: $manifest_sha256,
     installed_at: $installed_at,
     runtime: { node: $runtime_node_version },

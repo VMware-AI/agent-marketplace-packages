@@ -34,7 +34,29 @@ SHA_PATH="$TARBALL_PATH.sha256"
 
 log "creating $TARBALL_PATH"
 log "  root:  $BUNDLE_DIR/"
-log "  files: $(find "$BUNDLE_DIR" -type f | wc -l | tr -d ' ')"
+
+# Count files we will pack: every file under $BUNDLE_DIR, plus meta.yaml at
+# the agent root if present. meta.yaml is agent-level (not version-level)
+# marketing data — display_name / description / logo / category / tags /
+# runtime_type — and the marketplace-api reindex expects to find it at
+# the tarball root so each Agent entry in dist/index.json gets populated.
+# Without it, the consumer UI shows blank cards. See buildIndexFromDir
+# in internal/cli/packagecmd/build_index.go for the reader side.
+META_FILE="agents/$AGENT/meta.yaml"
+HAS_META=0
+if [[ -f "$META_FILE" ]]; then
+  HAS_META=1
+fi
+# Where meta.yaml lives: two dirname hops above BUNDLE_DIR.
+#   BUNDLE_DIR         = agents/<agent>/<source>/<version>
+#   dirname x1         = agents/<agent>/<source>
+#   dirname x2         = agents/<agent>             ← where meta.yaml lives
+AGENT_ROOT_DIR="$(dirname "$(dirname "$BUNDLE_DIR")")"
+FILE_COUNT=$(find "$BUNDLE_DIR" -type f | wc -l | tr -d ' ')
+if [[ "$HAS_META" -eq 1 ]]; then
+  FILE_COUNT=$((FILE_COUNT + 1))
+fi
+log "  files: $FILE_COUNT"
 
 # Build the tarball. We cd into the parent so the tarball's root is the
 # version directory name itself (not its absolute path).
@@ -123,14 +145,40 @@ trap 'rm -f "$TMP_TARBALL"' EXIT
 TMP_TARBALL="$(mktemp -t pack.XXXXXX.tar.gz)"
 trap 'rm -f "$TMP_TARBALL"' EXIT
 
-if COPYFILE_DISABLE=1 tar -czf "$TMP_TARBALL" \
-     --owner=0 --group=0 --numeric-owner \
-     --no-xattrs --no-mac-metadata \
-     -C "$BUNDLE_PARENT" \
-     "$BUNDLE_BASE"; then
-  :
+if [[ "$HAS_META" -eq 1 ]]; then
+  # Embed meta.yaml at the tarball root + the version dir below it, in one
+  # tar invocation. This mirrors what `package build`'s build.go does on
+  # the Go side, and what buildIndexFromDir's extractTarballFiles expects
+  # to read.
+  #
+  # bsdtar (macOS default) doesn't accept multiple `-C` flags, so we stage
+  # into a temp dir first: symlink meta.yaml + the version dir side by
+  # side, then tar the staging root. This is platform-portable (GNU tar
+  # on Linux would do it in one shot via two `-C`s, but we want the same
+  # script to work on both without GNU-tar dependency).
+  STAGE="$(mktemp -d -t pack-stage.XXXXXX)"
+  trap 'rm -rf "$STAGE"' EXIT
+  ln -s "$REPO_ROOT/$BUNDLE_PARENT/$BUNDLE_BASE" "$STAGE/$BUNDLE_BASE"
+  ln -s "$REPO_ROOT/$AGENT_ROOT_DIR/meta.yaml" "$STAGE/meta.yaml"
+  if COPYFILE_DISABLE=1 tar -czf "$TMP_TARBALL" \
+       -h \
+       --owner=0 --group=0 --numeric-owner \
+       --no-xattrs --no-mac-metadata \
+       -C "$STAGE" "meta.yaml" "$BUNDLE_BASE"; then
+    :
+  else
+    err "tar failed (with meta.yaml)"
+  fi
 else
-  err "tar failed"
+  if COPYFILE_DISABLE=1 tar -czf "$TMP_TARBALL" \
+       --owner=0 --group=0 --numeric-owner \
+       --no-xattrs --no-mac-metadata \
+       -C "$BUNDLE_PARENT" \
+       "$BUNDLE_BASE"; then
+    :
+  else
+    err "tar failed"
+  fi
 fi
 
 TAR_SHA="$(sha256sum "$TMP_TARBALL" | awk '{print $1}')"

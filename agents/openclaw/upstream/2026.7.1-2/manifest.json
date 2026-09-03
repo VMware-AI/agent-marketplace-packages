@@ -2,7 +2,7 @@
   "agent": "openclaw",
   "channel": "stable",
   "checksums": {
-    "install.sh": "sha256:ef8f9fb7a4c26528be8f7f796c3514178c000277e53537fea851bfe3e9876752",
+    "install.sh": "sha256:b53849063e9cd8ed1c96c41789c53c657ee266ab77cbf2a1bc257c31af900b26",
     "uninstall.sh": "sha256:041e9864eccb723c48327953beb00e7a32e49eaa6e1d8a94328ddf045cedf52f"
   },
   "configs": [
@@ -236,7 +236,7 @@
       "install_hint": "https://nodejs.org/dist/v22.22.3/node-v22.22.3-linux-x64.tar.xz (or use nvm: 'nvm install 24 && nvm use 24')",
       "name": "node",
       "verify_cmd": "node --version",
-      "version": ">=22.22.3 <23, >=24.15.0 <25, or >=25.9.0"
+      "version": ">=22.22.3 <23 || >=24.15.0 <25 || >=25.9.0"
     }
   ],
   "schema_version": "1.1",

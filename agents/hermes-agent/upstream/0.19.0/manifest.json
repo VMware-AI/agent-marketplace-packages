@@ -2,7 +2,7 @@
   "agent": "hermes-agent",
   "channel": "stable",
   "checksums": {
-    "install.sh": "sha256:ab3732342a9eb8d5fe0f3e482c9e65bc6c507c0c6b91f8909293538ecc8ffc69",
+    "install.sh": "sha256:c08ccec065e991a343e6adae8b056e6591a2e36bdfb46b316388a63b31a652f6",
     "payload/hermes_agent-0.19.0-py3-none-any.whl": "sha256:bd0bac012aee38a60894781f4597dc29ee7bedb3448540249921f10d3bef327f",
     "uninstall.sh": "sha256:3de3b28f4391918db7b6f375dcdc24999bc9dee79ab4805a81988a87c7bd83d1"
   },
@@ -381,6 +381,17 @@
       ],
       "description": "hermes-agent web dashboard (NousResearch), pinned to port 8080",
       "name": "dashboard",
+      "restart": "on-failure",
+      "working_dir": "{{DEPLOY_ROOT}}"
+    },
+    {
+      "command": [
+        "hermes",
+        "gateway",
+        "run"
+      ],
+      "description": "hermes-agent messaging gateway (NousResearch); foreground `gateway run` is the official pattern for systemd user units",
+      "name": "gateway",
       "restart": "on-failure",
       "working_dir": "{{DEPLOY_ROOT}}"
     }

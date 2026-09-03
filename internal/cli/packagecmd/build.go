@@ -7,7 +7,6 @@ import (
 	"io"
 	"os"
 	"path/filepath"
-	"strings"
 
 	"github.com/spf13/cobra"
 )
@@ -212,7 +211,18 @@ func addFileToTar(tw *tar.Writer, srcPath, nameInTar string) error {
 	if err != nil {
 		return err
 	}
-	hdr := &tar.Header{Name: nameInTar, Mode: 0644, Size: fi.Size(), Typeflag: tar.TypeReg}
+	// Preserve the file's mode bits. The previous version hardcoded
+	// Mode: 0644 here, which silently stripped the +x bit from shell
+	// scripts (install.sh / uninstall.sh / render-config.sh) and from
+	// shipped binaries (bin/<name>). The kernel would then refuse
+	// execve() at install time with EACCES — the install would fail
+	// with ``fork/exec .../install.sh: permission denied`` even though
+	// the script content was fine. The consumer also runs ``chmod 0755``
+	// at exec time as defense in depth (cmd/agentpkg/internal/cli/install.go
+	// ``execScript``); preserving the mode here keeps the tarball honest
+	// from the start and lets ``tar -tvf`` show meaningful modes.
+	mode := fi.Mode().Perm()
+	hdr := &tar.Header{Name: nameInTar, Mode: int64(mode), Size: fi.Size(), Typeflag: tar.TypeReg}
 	if err := tw.WriteHeader(hdr); err != nil {
 		return err
 	}
@@ -220,8 +230,39 @@ func addFileToTar(tw *tar.Writer, srcPath, nameInTar string) error {
 	return err
 }
 
+// addSymlinkToTar writes a symbolic link to the archive, preserving the link
+// target verbatim instead of dereferencing to the target's content.
+//
+// ``filepath.Walk`` reports symlinks via the same FileInfo channel as regular
+// files (with ``Mode()&os.ModeSymlink`` set), so the only place to detect
+// them is here in the walk callback. ``addFileToTar``'s ``os.Open`` follows
+// symlinks — fine for regular files, but for a symlink it transparently
+// reads the TARGET file's content and writes it under a regular-file tar
+// header, which destroys the link at extract time. On install, the
+// launcher's ``import.meta.url`` then fails to resolve ``./dist/entry.js``
+// because the launcher is no longer the npm-style symlink that lives next
+// to the package's ``lib/`` directory.
+//
+// We preserve the symlink as ``tar.TypeSymlink`` with the original
+// ``Linkname`` (relative path). On extract, the consumer's ``tar -xzf``
+// recreates the link, and the launcher's ``import.meta.url`` resolves into
+// the package directory as the original npm layout intended.
+func addSymlinkToTar(tw *tar.Writer, srcPath, nameInTar string) error {
+	target, err := os.Readlink(srcPath)
+	if err != nil {
+		return fmt.Errorf("readlink %s: %w", srcPath, err)
+	}
+	hdr := &tar.Header{
+		Name:     nameInTar,
+		Linkname: target,
+		Mode:     0o777,
+		Typeflag: tar.TypeSymlink,
+	}
+	return tw.WriteHeader(hdr)
+}
+
 // addDirToTar walks a directory and adds all regular files to the archive,
-// preserving relative paths.
+// preserving relative paths inside the version dir.
 func addDirToTar(tw *tar.Writer, baseDir, prefix string) error {
 	return filepath.Walk(baseDir, func(path string, info os.FileInfo, err error) error {
 		if err != nil {
@@ -229,6 +270,21 @@ func addDirToTar(tw *tar.Writer, baseDir, prefix string) error {
 		}
 		if info.IsDir() {
 			return nil
+		}
+		// Handle symlinks BEFORE delegating to addFileToTar — the latter
+		// dereferences via os.Open and would otherwise emit a regular-file
+		// header carrying the target's content (see addSymlinkToTar's
+		// doc comment for the failure mode this prevents).
+		if info.Mode()&os.ModeSymlink != 0 {
+			rel, relErr := filepath.Rel(baseDir, path)
+			if relErr != nil {
+				return relErr
+			}
+			nameInTar := rel
+			if prefix != "" {
+				nameInTar = prefix + "/" + rel
+			}
+			return addSymlinkToTar(tw, path, nameInTar)
 		}
 		rel, err := filepath.Rel(baseDir, path)
 		if err != nil {
@@ -239,14 +295,18 @@ func addDirToTar(tw *tar.Writer, baseDir, prefix string) error {
 		if rel == "manifest.json" || rel == "meta.yaml" {
 			return nil
 		}
+		// Preserve rel verbatim. The earlier ``Strip "upstream/0.1.0/"``
+		// logic dropped the first path component unconditionally, which
+		// collapsed ``payload/bin/opencode`` → ``bin/opencode`` and
+		// produced a tarball whose layout did not match the manifest's
+		// ``checksums["payload/bin/opencode"]`` keys. install.sh then
+		// exited 30 with "manifest references 'payload/bin/opencode'
+		// but it is not present". The baseDir is already the version
+		// directory (see buildOne's payloadDir), so ``rel`` IS the path
+		// the manifest expects inside the tarball.
 		nameInTar := rel
 		if prefix != "" {
 			nameInTar = prefix + "/" + rel
-		}
-		// Strip "upstream/0.1.0/" prefix — the tarball root IS the version dir.
-		parts := strings.SplitN(rel, string(os.PathSeparator), 2)
-		if len(parts) == 2 {
-			nameInTar = parts[1]
 		}
 		return addFileToTar(tw, path, nameInTar)
 	})

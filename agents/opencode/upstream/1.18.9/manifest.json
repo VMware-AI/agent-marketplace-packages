@@ -2,7 +2,7 @@
   "agent": "opencode",
   "channel": "stable",
   "checksums": {
-    "install.sh": "sha256:49c35d286d9b189976851a680963455b7298b83b3790356b552a81d90cac1501",
+    "install.sh": "sha256:e573946e5291416be55abd8d2801b7dc746dd839efa33a2632922230891cee26",
     "payload/bin/opencode": "sha256:7c4d91c84d2bfdeabb59257e3490c5e5acb08f2aacb3e42f3ddc296a1c3f1aca",
     "uninstall.sh": "sha256:e8fe299476239c0fa1c746e258b7391f6abaa70769aac8ba931c54296aa8a126"
   },

@@ -49,8 +49,8 @@ func verifyAgent(agentDir string, strict bool) error {
 			return err
 		}
 		meta.Defaults(name)
-		fmt.Printf("  meta.yaml:    ok    display_name=%q logo=%q category=%q tags=%v\n",
-			meta.DisplayName, meta.Logo, meta.Category, meta.Tags)
+		fmt.Printf("  meta.yaml:    ok    display_name=%q logo=%q category=%q tags=%v runtime_type=%q\n",
+			meta.DisplayName, meta.Logo, meta.Category, meta.Tags, meta.RuntimeType)
 	} else {
 		fmt.Println("  meta.yaml:    skip  (not present)")
 	}

@@ -14,6 +14,7 @@ category:    "developer"        # from docs/category-catalog.md
 
 # Optional
 logo:        ""                 # empty, http(s) URL, or data:image/...;base64,... (see docs/logo-format.md)
+runtime_type: "vm"              # vm | container | k8s — see "Runtime type" below
 tags:                            # 0–10 search tags, lowercase, dash-separated
   - ai
   - terminal
@@ -28,7 +29,20 @@ tags:                            # 0–10 search tags, lowercase, dash-separated
 | `description` | string | **yes** | 10–200 characters |
 | `category` | string | **yes** | must be in [category catalog](category-catalog.md) |
 | `logo` | string | no | empty, http(s) URL, or `data:image/...;base64,...`; see [logo format](logo-format.md) |
+| `runtime_type` | string | no (defaults to `vm`) | one of `vm`, `container`, `k8s` — see below |
 | `tags` | list[string] | no | 0–10 items, each matches `[a-z0-9-]{1,32}` |
+
+## Runtime type
+
+`runtime_type` declares the deployment target the agent is packaged for. It is **declared once in `meta.yaml`** (not per-version in `manifest.json`) because for a given agent it is stable across all versions — a k8s-targeted agent ships k8s-targeted versions, and so on. If `runtime_type` is omitted, `Defaults()` fills in `"vm"`.
+
+| Value | Meaning |
+|-------|---------|
+| `vm` | systemd --user on a VM / bare-metal host. This is the default and matches every current agent (`opencode`, `openclaw`, `hermes-agent`). |
+| `container` | Single-container run — the agent ships its own image / entrypoint and `install.sh` (if any) just drops a launcher. |
+| `k8s` | Helm chart or k8s-manifest driven install — `install.sh` emits a `Deployment` / `Service` rather than a systemd unit. |
+
+The marketplace frontend can filter on `runtime_type` to show only agents that match the operator's target environment.
 
 ## Validation
 
@@ -67,6 +81,7 @@ tags:
       "logo":         "https://example.com/opencode.svg",
       "category":     "developer",
       "tags":         ["ai", "terminal", "code"],
+      "runtime_type": "vm",
       "versions": [
         { "version": "0.0.55", "source": "upstream", "channel": "stable", "tarball": {...}, "manifest": {...} },
         { "version": "0.0.54", "source": "upstream", "channel": "stable", "tarball": {...}, "manifest": {...} }

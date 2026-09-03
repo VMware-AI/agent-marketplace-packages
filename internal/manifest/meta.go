@@ -21,17 +21,46 @@ type Meta struct {
 	Description string `yaml:"description"`
 	// Logo carries the agent's logo as either:
 	//   - a `data:image/<mime>;base64,<payload>` URL (preferred for offline / air-gapped deployments),
-	//   - an `http://` / `https://` URL (the consumer fetches it once at sync time), or
+	//   - an `http://` / `https://` URL (the consumer fetches it once at sync time),
+	//   - a bare filename (e.g. `opencode.png`) referencing an image asset bundled in the
+	//     consumer frontend (currently the agent-platform console serves them at
+	//     `/marketplace-logos/<file>`), or
 	//   - the empty string (the consumer falls back to its embedded default).
 	//
 	// Documented in docs/logo-format.md.
 	Logo     string   `yaml:"logo"`
 	Category string   `yaml:"category"`
 	Tags     []string `yaml:"tags"`
+	// RuntimeType declares the deployment target this agent ships for:
+	//   - "vm"        — systemd --user on a VM / bare-metal host (default)
+	//   - "container" — single-container run (the agent ships its own image / entrypoint)
+	//   - "k8s"       — helm chart or k8s-manifest driven install
+	//
+	// Declared in meta.yaml (not manifest.json) because it is stable across
+	// all versions of an agent — a k8s-targeted agent ships k8s-targeted
+	// versions. See docs/meta-yaml-schema.md.
+	RuntimeType string `yaml:"runtime_type"`
 }
 
 // tagRE validates tag characters.
 var tagRE = regexp.MustCompile(`^[a-z0-9-]{1,32}$`)
+
+// staticAssetLogoRE matches a bare logo filename referencing an image asset
+// bundled in the consumer frontend (e.g. the agent-platform console's
+// /marketplace-logos/<file> static dir). The extension allow-list mirrors the
+// backend's extForLogoMime set so the consumer never accepts a format it
+// can't serve. Path-traversal guards (`/`, `..`) are checked separately so the
+// regex stays a pure shape match — see validateStaticAssetFilename.
+var staticAssetLogoRE = regexp.MustCompile(`^[A-Za-z0-9._-]+\.(png|jpg|jpeg|gif|webp|svg)$`)
+
+// validRuntimeTypes is the closed enum for meta.RuntimeType. Kept here
+// (not in catalogs.go) because it is a property of the agent descriptor,
+// not a category lookup the user can extend.
+var validRuntimeTypes = map[string]bool{
+	"vm":        true,
+	"container": true,
+	"k8s":       true,
+}
 
 // LoadMeta reads and validates meta.yaml. Returns an error if any required
 // field is missing or out of range. logo must be one of the supported formats
@@ -60,6 +89,9 @@ func (m *Meta) Defaults(agentName string) {
 	if m.Tags == nil {
 		m.Tags = []string{}
 	}
+	if m.RuntimeType == "" {
+		m.RuntimeType = "vm"
+	}
 }
 
 // Validate checks the meta against the schema.
@@ -69,6 +101,8 @@ func (m *Meta) Defaults(agentName string) {
 //   - empty string (consumer falls back to default logo)
 //   - `data:image/<mime>;base64,<...>` (offline / air-gapped)
 //   - `http://` or `https://` URL (consumer fetches once at sync time)
+//   - bare filename (consumer resolves it from its bundled frontend assets;
+//     suitable only when the consumer's frontend ships that image at build time)
 //
 // Anything else returns a clear error. We do NOT inspect the payload bytes —
 // the consumer enforces size + MIME sniffing at fetch time; we only verify
@@ -88,6 +122,9 @@ func (m *Meta) Validate() error {
 	}
 	if !validCategories[m.Category] {
 		return fmt.Errorf("meta: category %q is not in the catalog (see docs/category-catalog.md)", m.Category)
+	}
+	if m.RuntimeType != "" && !validRuntimeTypes[m.RuntimeType] {
+		return fmt.Errorf("meta: runtime_type %q is not valid (want one of: vm, container, k8s)", m.RuntimeType)
 	}
 	if len(m.Tags) > 10 {
 		return fmt.Errorf("meta: too many tags (%d, max 10)", len(m.Tags))
@@ -123,7 +160,27 @@ func validateLogo(s string) error {
 		}
 		return nil
 	}
-	return fmt.Errorf("meta: logo %q is not a recognized format (want empty, data:image/...;base64,..., or http(s) URL; see docs/logo-format.md)", s)
+	if validateStaticAssetFilename(s) == nil {
+		return nil // bare filename referencing consumer-bundled asset
+	}
+	return fmt.Errorf("meta: logo %q is not a recognized format (want empty, data:image/...;base64,..., http(s) URL, or bare filename; see docs/logo-format.md)", s)
+}
+
+// validateStaticAssetFilename accepts a bare logo filename referencing an
+// asset bundled in the consumer frontend (e.g. agent-platform-console's
+// /marketplace-logos/<file>). The shape allow-list (extension set, charset)
+// mirrors the backend's extForLogoMime so we never accept a format the
+// consumer can't serve. Path-traversal guards (`/`, `..`) are checked here
+// rather than baked into the regex so the regex stays a pure shape match
+// that's safe to embed in error messages.
+func validateStaticAssetFilename(s string) error {
+	if strings.ContainsAny(s, "/\\") || strings.Contains(s, "..") {
+		return fmt.Errorf("bare filename must not contain path separators")
+	}
+	if !staticAssetLogoRE.MatchString(s) {
+		return fmt.Errorf("must match %s", staticAssetLogoRE)
+	}
+	return nil
 }
 
 // validateDataURL accepts `data:image/<mime>;base64,<payload>` and rejects

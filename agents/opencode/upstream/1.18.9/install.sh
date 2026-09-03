@@ -157,6 +157,30 @@ fi
 
 NOW=$(date -u +%Y-%m-%dT%H:%M:%SZ)
 
+# Mirror manifest.services[] and manifest.configs[] into state.json so
+# uninstall (run by `agentpkg uninstall` OR by hand) can find the systemd
+# --user unit + rendered config to remove. Without these, an install done
+# by running this script directly — without `agentpkg install` writing
+# them post-install — would leave ~/.config/opencode/ and
+# ~/.config/systemd/user/opencode-web.service behind on uninstall.
+#
+# The unit_path is computed the same way the CLI's writeSystemdUserUnit
+# does: $HOME/.config/systemd/user/<agent>-<svc.name>.service.
+SERVICES_JSON=$(jq -c --arg agent "$AGENT" --arg home "$HOME" '
+    .services // [] | map({
+        name: .name,
+        unit_path: ($home + "/.config/systemd/user/" + $agent + "-" + .name + ".service"),
+        started: false
+    })
+' manifest.json)
+CONFIGS_JSON=$(jq -c '
+    .configs // [] | map({
+        name: .name,
+        render_to: .render_to,
+        mode: .mode
+    })
+' manifest.json)
+
 jq -n \
   --arg agent "$AGENT" \
   --arg source "$SOURCE_TREE" \
@@ -166,6 +190,8 @@ jq -n \
   --arg target_root "$TARGET_ROOT" \
   --arg installed_version "$VERSION_OUTPUT" \
   --argjson installed_files "$(printf '%s\n' "${INSTALLED_FILES[@]}" | jq -R . | jq -s .)" \
+  --argjson services "$SERVICES_JSON" \
+  --argjson configs "$CONFIGS_JSON" \
   --argjson previous "$PREV_STATE_JSON" \
   --arg installed_at "$NOW" \
   --arg manifest_sha256 "$(sha256sum manifest.json | awk '{print $1}')" \
@@ -178,6 +204,8 @@ jq -n \
     target_root: $target_root,
     installed_version: $installed_version,
     installed_files: $installed_files,
+    services: $services,
+    configs: $configs,
     manifest_sha256: $manifest_sha256,
     installed_at: $installed_at,
     previous: $previous
