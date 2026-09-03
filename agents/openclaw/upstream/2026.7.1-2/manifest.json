@@ -2,7 +2,7 @@
   "agent": "openclaw",
   "channel": "stable",
   "checksums": {
-    "install.sh": "sha256:3a19595ceec153e870caca098c804629a01c099b83ddf55995b76c5d92c41e00",
+    "install.sh": "sha256:b53849063e9cd8ed1c96c41789c53c657ee266ab77cbf2a1bc257c31af900b26",
     "uninstall.sh": "sha256:041e9864eccb723c48327953beb00e7a32e49eaa6e1d8a94328ddf045cedf52f"
   },
   "configs": [

@@ -197,24 +197,57 @@ ok "verified: $VERSION_OUTPUT"
 # ``--allow-unconfigured`` to the systemd unit, which suppresses the
 # enforcement but doesn't actually leave a usable config on disk.
 #
-# Render a minimal config here so a default install is runnable out of the
-# box: the gateway boots into ``gateway.mode=local`` and an operator can
-# populate providers / auth later via the webadmin (which calls
-# ``render-config.sh`` with full ``--config-input``). If the config file
-# already exists (because render-config.sh ran earlier in this install or a
-# previous install left one), leave it alone — we never overwrite an
-# operator-authored config.
+# Render a sensible default here so a default install is runnable out of
+# the box. The fields below match the canonical deployment: gateway sits
+# behind a TLS-terminating reverse proxy on the same host, and the proxy
+# enforces cookie-session auth on every request — the gateway itself runs
+# unauthenticated + loopback-only + wildcard-origin. Operators exposing
+# the gateway directly should override ``bind`` to ``lan``/``tailnet`` and
+# re-enable ``auth.mode`` + tighten ``allowedOrigins``.
+#
+#   * ``mode=local``: required to start without ``--allow-unconfigured``.
+#   * ``bind=loopback``: only listen on 127.0.0.1; the reverse proxy is
+#     the only path to the gateway. Loopback-only is what makes the
+#     wildcard-origin below safe (only same-host processes can reach the
+#     gateway WS port).
+#   * ``controlUi.allowedOrigins=["*"]``: openclaw refuses browser WS
+#     connections whose ``Origin`` isn't in this list. The proxy serves
+#     the page at ``https://<host>/``, so the browser Origin is the host
+#     itself — there's no way to predict it at tarball-build time, and
+#     any value we pick here would break every other install. Wildcard
+#     is acceptable because bind is loopback.
+#   * ``auth.mode=none``: the reverse proxy already enforces cookie auth
+#     on every request. Re-enabling gateway auth would double-prompt for
+#     credentials the browser dashboard can't supply, and break the WS
+#     handshake (``reason=token_missing``) on every page load.
+#   * ``trustedProxies=127.0.0.1/32,::1/128``: the proxy forwards
+#     X-Forwarded-* from the same host. Without this allowlist the
+#     gateway logs ``Proxy headers detected from untrusted address`` on
+#     every WS frame and treats the connection as remote (affecting
+#     device-pairing / local-client detection).
+#
+# If the config file already exists (because render-config.sh ran earlier
+# in this install or a previous install left one), leave it alone — we
+# never overwrite an operator-authored config.
 log "checking for rendered config at $HOME/.openclaw/openclaw.json ..."
 mkdir -p "$HOME/.openclaw"
 DEFAULT_CFG="$HOME/.openclaw/openclaw.json"
 if [[ ! -f "$DEFAULT_CFG" ]]; then
   TMP_CFG="$(mktemp -t openclaw-default-cfg.XXXXXX)"
   trap 'rm -f "$TMP_CFG"' EXIT
-  jq -n '{gateway: {mode: "local"}}' > "$TMP_CFG"
+  jq -n '{
+    gateway: {
+      mode: "local",
+      bind: "loopback",
+      controlUi: { allowedOrigins: ["*"] },
+      auth: { mode: "none" },
+      trustedProxies: ["127.0.0.1/32", "::1/128"]
+    }
+  }' > "$TMP_CFG"
   install -m 0600 "$TMP_CFG" "$DEFAULT_CFG"
   rm -f "$TMP_CFG"
   trap - EXIT
-  ok "  wrote minimal default config: $DEFAULT_CFG (gateway.mode=local; provider/auth empty)"
+  ok "  wrote default config: $DEFAULT_CFG (mode=local; loopback bind; wildcard origin; auth off — intended for behind-proxy deployments)"
 else
   ok "  config already present at $DEFAULT_CFG — leaving as-is"
 fi
