@@ -122,6 +122,7 @@ func buildIndexFromDir(outDir string) (*apitypes.Index, error) {
 					agent.Logo = meta.Logo
 					agent.Category = meta.Category
 					agent.Tags = meta.Tags
+					agent.RuntimeType = meta.RuntimeType
 				}
 			}
 			agentEntries[key] = agent

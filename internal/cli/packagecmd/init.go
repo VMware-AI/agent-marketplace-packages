@@ -54,6 +54,14 @@ logo: "<logo>"
 # Required: one of the category IDs from docs/category-catalog.md.
 category: "<category>"
 
+# Optional: target deployment environment for this agent.
+#   "vm"        — systemd --user on a VM / bare-metal host (default if unset)
+#   "container" — single-container run
+#   "k8s"       — helm chart or k8s-manifest driven install
+# Stable across all versions of the agent; declared once in meta.yaml,
+# not per-version in manifest.json. Defaults to "vm" if omitted.
+runtime_type: "<runtime_type>"
+
 # Optional: up to 10 search tags, lowercase, dash-separated.
 tags:
   - tag-1
@@ -133,6 +141,7 @@ func renderMeta(name string) string {
 		"description":  fmt.Sprintf("Short description for %s (10-200 chars).", name),
 		"logo":         "",
 		"category":     "utility",
+		"runtime_type": "vm",
 	}
 	var buf bytes.Buffer
 	if err := tmpl.Execute(&buf, data); err != nil {

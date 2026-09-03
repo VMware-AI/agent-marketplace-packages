@@ -61,6 +61,7 @@
           "logo": { "type": "string", "description": "Empty, http(s) URL, or data:image/...;base64,... — see meta-yaml-schema.md" },
           "category": { "type": "string" },
           "tags": { "type": "array", "items": { "type": "string" } },
+          "runtime_type": { "type": "string", "enum": ["vm", "container", "k8s"], "description": "Deployment target declared in meta.yaml — stable across all versions of the agent." },
           "versions": { "type": "array", "items": { "$ref": "#/components/schemas/VersionStripped" } }
         }
       },
@@ -91,6 +92,7 @@
           "logo": { "type": "string", "description": "Empty, http(s) URL, or data:image/...;base64,... — see meta-yaml-schema.md" },
           "category": { "type": "string" },
           "tags": { "type": "array", "items": { "type": "string" } },
+          "runtime_type": { "type": "string", "enum": ["vm", "container", "k8s"], "description": "Deployment target declared in meta.yaml — stable across all versions of the agent." },
           "versions": { "type": "array", "items": { "$ref": "#/components/schemas/Version" } }
         }
       },
