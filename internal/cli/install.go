@@ -579,6 +579,12 @@ func runUninstall(name string, s *installShared) error {
 		if err := os.Remove(svc.UnitPath); err != nil && !os.IsNotExist(err) {
 			fmt.Fprintf(os.Stderr, "WARN: rm %s: %v\n", svc.UnitPath, err)
 		}
+		// Walk up and rmdir any now-empty parents (e.g. the per-user
+		// ~/.config/systemd/user/ dir if this was its only unit). Stops at
+		// $HOME so we never delete the user's config tree root.
+		if removed := rmdirEmptyParents(svc.UnitPath, userHomeOrTmp()); removed != "" {
+			fmt.Fprintf(os.Stderr, "  removed empty dir: %s\n", removed)
+		}
 	}
 	if len(state.Services) > 0 {
 		if err := runSystemctlUser("daemon-reload"); err != nil {
@@ -599,6 +605,12 @@ func runUninstall(name string, s *installShared) error {
 		}
 		if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
 			fmt.Fprintf(os.Stderr, "WARN: rm config %s: %v\n", path, err)
+		}
+		// Walk up and rmdir any now-empty parents (e.g. the per-agent
+		// ~/.config/opencode/ dir if opencode.json was its only file and
+		// opencode itself didn't write any runtime state). Stops at $HOME.
+		if removed := rmdirEmptyParents(path, userHomeOrTmp()); removed != "" {
+			fmt.Fprintf(os.Stderr, "  removed empty dir: %s\n", removed)
 		}
 	}
 
@@ -1356,6 +1368,40 @@ func needsDownload(cachePath, expectedSHA string) bool {
 // Used to fish out uninstall.sh from a cached tarball.
 func extractSingleFile(tarballPath, fileName, destDir string) error {
 	return runTarExtract(tarballPath, fileName, destDir)
+}
+
+// rmdirEmptyParents walks up from path, removing any parent directory
+// that is now empty. Stops at stopAt (exclusive), at "/", or when it
+// hits a non-empty directory (which is preserved — it likely contains
+// other tools' state). Returns the highest directory actually removed,
+// or "" if nothing was.
+//
+// Pairs with the parent-chain walk each uninstall.sh does under
+// $TARGET_ROOT — that one handles DEPLOY_ROOT ancestry, while this one
+// handles $HOME ancestry (systemd --user units, rendered configs).
+func rmdirEmptyParents(path, stopAt string) string {
+	if stopAt == "" {
+		stopAt = "/"
+	}
+	parent := filepath.Dir(path)
+	var removed string
+	for {
+		if parent == "" || parent == "." || parent == "/" {
+			return removed
+		}
+		if parent == stopAt {
+			return removed
+		}
+		entries, err := os.ReadDir(parent)
+		if err != nil || len(entries) > 0 {
+			return removed
+		}
+		if err := os.Remove(parent); err != nil {
+			return removed
+		}
+		removed = parent
+		parent = filepath.Dir(parent)
+	}
 }
 
 // userHomeOrTmp returns $HOME, falling back to /tmp if empty.

@@ -233,3 +233,86 @@ func TestSubstituteVars(t *testing.T) {
 		t.Errorf("got %q", got)
 	}
 }
+
+// TestRmdirEmptyParents exercises the parent-chain cleanup used by
+// runUninstall after deleting a rendered config or systemd unit. We
+// cover the four paths that actually matter:
+//
+//  1. empty parent → rmdir, walk up
+//  2. non-empty parent → stop, preserve it
+//  3. stopAt reached → stop, preserve it
+//  4. file-not-found path → no-op, no crash
+func TestRmdirEmptyParents(t *testing.T) {
+	dir := t.TempDir()
+	home := filepath.Join(dir, "home")
+	if err := os.MkdirAll(home, 0755); err != nil {
+		t.Fatal(err)
+	}
+
+	// Case 1: chain of empty dirs — should rmdir both opencode/ and its
+	// parent .config/ (the chain stops at $HOME).
+	cfgDir := filepath.Join(home, ".config", "opencode")
+	cfgFile := filepath.Join(cfgDir, "opencode.json")
+	if err := os.MkdirAll(cfgDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(cfgFile, []byte("{}"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	// Remove the file ourselves (the helper is meant to be called AFTER
+	// os.Remove of the leaf); simulate by removing the file too.
+	if err := os.Remove(cfgFile); err != nil {
+		t.Fatal(err)
+	}
+	if got := rmdirEmptyParents(cfgFile, home); got != filepath.Join(home, ".config") {
+		t.Errorf("case 1: got %q want %q", got, filepath.Join(home, ".config"))
+	}
+	if _, err := os.Stat(cfgDir); !os.IsNotExist(err) {
+		t.Errorf("case 1: %s should be gone", cfgDir)
+	}
+	if _, err := os.Stat(filepath.Join(home, ".config")); !os.IsNotExist(err) {
+		t.Errorf("case 1: .config parent should also be gone (empty)")
+	}
+
+	// Case 2: non-empty parent stops the walk. Create .config with two
+	// children; remove only one, expect the other to keep the dir alive.
+	mixed := filepath.Join(home, ".config")
+	if err := os.MkdirAll(filepath.Join(mixed, "systemd"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(mixed, "systemd", "user-a.service"), nil, 0644); err != nil {
+		t.Fatal(err)
+	}
+	leaf := filepath.Join(mixed, "systemd", "user-b.service")
+	if err := os.WriteFile(leaf, nil, 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Remove(leaf); err != nil {
+		t.Fatal(err)
+	}
+	if got := rmdirEmptyParents(leaf, home); got != "" {
+		t.Errorf("case 2: got %q want \"\" (non-empty parent should stop walk)", got)
+	}
+	if _, err := os.Stat(filepath.Join(mixed, "systemd")); err != nil {
+		t.Errorf("case 2: systemd dir should still exist")
+	}
+
+	// Case 3: stopAt is exclusive — never remove it.
+	if err := os.RemoveAll(filepath.Join(mixed, "systemd")); err != nil {
+		t.Fatal(err)
+	}
+	// .config is now empty; rmdirEmptyParents should NOT delete .config
+	// if it's the stopAt. (We pass mixed as stopAt here to test the bound.)
+	if got := rmdirEmptyParents(filepath.Join(mixed, "anything"), mixed); got != "" {
+		t.Errorf("case 3: rmdir walked past stopAt: got %q", got)
+	}
+	if _, err := os.Stat(mixed); err != nil {
+		t.Errorf("case 3: stopAt itself was removed (must be exclusive)")
+	}
+
+	// Case 4: leaf doesn't exist — function still returns "" cleanly.
+	missing := filepath.Join(home, "nope", "missing.json")
+	if got := rmdirEmptyParents(missing, home); got != "" {
+		t.Errorf("case 4: got %q want \"\" for missing path", got)
+	}
+}
