@@ -8,6 +8,7 @@ import (
 
 	"github.com/VMware-AI/agent-marketplace-packages/internal/apitypes"
 	"github.com/VMware-AI/agent-marketplace-packages/internal/repo"
+	"github.com/VMware-AI/agent-marketplace-packages/internal/skills"
 	"github.com/go-chi/chi/v5"
 )
 
@@ -20,9 +21,19 @@ import (
 // atomic.Pointer.Load returning a stable pointer. Mutating a published
 // index in place will trip the race detector. To replace, construct a
 // fresh *apitypes.Index (e.g. via apitypes.ParseIndex) and Store it.
+//
+// SkillsIndex follows the same contract: published via SetSkillsIndex,
+// readers MUST treat the loaded *skills.Index as immutable.
+//
+// SkillsDir is the per-process write coordinator for skills: it owns the
+// mutex that serializes upload + delete + reload-mutating operations
+// against dist/skills/. Read endpoints do NOT take this lock — they go
+// through SkillsIndex() for race-free concurrent access.
 type State struct {
-	index atomic.Pointer[apitypes.Index]
-	Dist  *repo.Dir
+	index       atomic.Pointer[apitypes.Index]
+	skillsIndex atomic.Pointer[skills.Index]
+	Dist        *repo.Dir
+	SkillsDir   *SkillsDir
 }
 
 // Index returns the currently-published index, or nil if none has been
@@ -34,12 +45,27 @@ func (s *State) Index() *apitypes.Index { return s.index.Load() }
 // snapshot, never a torn read.
 func (s *State) SetIndex(idx *apitypes.Index) { s.index.Store(idx) }
 
-// NewState constructs a State with the given Dist and initial Index.
-// dist must be non-nil; idx may be nil (a reload will populate it).
-func NewState(dist *repo.Dir, idx *apitypes.Index) *State {
-	s := &State{Dist: dist}
+// SkillsIndex returns the currently-published skills index, or nil if
+// none has been loaded (normal before the first Reload completes).
+func (s *State) SkillsIndex() *skills.Index { return s.skillsIndex.Load() }
+
+// SetSkillsIndex atomically publishes a new skills index, mirroring
+// SetIndex for the agents collection.
+func (s *State) SetSkillsIndex(idx *skills.Index) { s.skillsIndex.Store(idx) }
+
+// NewState constructs a State with the given Dist, initial agent Index,
+// and initial skills Index. Either index may be nil (a reload will
+// populate it). dist must be non-nil.
+func NewState(dist *repo.Dir, idx *apitypes.Index, sIdx *skills.Index) *State {
+	s := &State{
+		Dist:      dist,
+		SkillsDir: NewSkillsDir(dist),
+	}
 	if idx != nil {
 		s.SetIndex(idx)
+	}
+	if sIdx != nil {
+		s.SetSkillsIndex(sIdx)
 	}
 	return s
 }
@@ -75,6 +101,26 @@ func NewRouter(s *State, password string, logger *slog.Logger) http.Handler {
 			r.Get("/agents/{name}/{source}/{version}/sha256", HandleSHA256(s))
 			r.Get("/agents/{name}/{source}/{version}/config-schema", HandleConfigSchema(s))
 			r.Get("/index.json", HandleRawIndex(s))
+
+			// Skills endpoints (Phase 3: read-only). Upload/delete routes
+			// are added by Phase 6/7 alongside the write mutex.
+			r.Get("/skills", HandleSkillsList(s))
+			r.Get("/skills/{source}", HandleSkillSourceList(s))
+			r.Get("/skills/{source}/{name}", HandleSkill(s))
+			r.Get("/skills/{source}/{name}/{version}", HandleSkillVersion(s))
+			r.Get("/skills/{source}/{name}/{version}/download", HandleSkillDownload(s))
+			r.Get("/skills/{source}/{name}/{version}/sha256", HandleSkillSHA256(s))
+			r.Get("/skills/{source}/{name}/{version}/SKILL.md", HandleSkillRawMD(s))
+			r.Get("/skills-index.json", HandleRawSkillsIndex(s))
+
+			// Phase 6: write endpoint. Multipart upload with 50 MiB cap,
+			// serialized via SkillsDir.mu.
+			r.Post("/skills", HandleSkillUpload(s))
+
+			// Phase 7: delete. Two URL shapes — one version, or every
+			// version under a (source, name) pair. See plan §4.3.
+			r.Delete("/skills/{source}/{name}/{version}", HandleSkillDelete(s))
+			r.Delete("/skills/{source}/{name}", HandleSkillDelete(s))
 		})
 	})
 

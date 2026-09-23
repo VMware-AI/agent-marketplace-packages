@@ -6,7 +6,7 @@
 //  3. Every path listed in the spec has a matching route registration
 //     in internal/server/router.go.
 //  4. Every schema referenced by $ref exists as a Go type in
-//     internal/apitypes/.
+//     internal/apitypes/ or internal/skills/.
 //
 // Exits 0 on success, 1 on any violation. Designed to run in CI as
 // `make openapi-check` before merge.
@@ -35,9 +35,13 @@ func main() {
 
 func run(args []string) error {
 	if len(args) < 3 {
-		return fmt.Errorf("usage: openapi-check <spec.json> <embed-copy.json> <apitypes-dir>")
+		return fmt.Errorf("usage: openapi-check <spec.json> <embed-copy.json> <apitypes-dir> [skills-dir]")
 	}
 	specPath, embedPath, apitypesDir := args[0], args[1], args[2]
+	skillsDir := ""
+	if len(args) >= 4 {
+		skillsDir = args[3]
+	}
 
 	// (1) spec parses
 	specData, err := os.ReadFile(specPath)
@@ -92,11 +96,20 @@ func run(args []string) error {
 		}
 	}
 
-	// (4) every $ref schema exists as a Go type in apitypes/
+	// (4) every $ref schema exists as a Go type in apitypes/ + skills/
 	refs := collectRefs(spec)
-	knownTypes, err := collectApitypesTypes(apitypesDir)
+	knownTypes, err := collectTypesFromDir(apitypesDir)
 	if err != nil {
 		return err
+	}
+	if skillsDir != "" {
+		skillTypes, err := collectTypesFromDir(skillsDir)
+		if err != nil {
+			return err
+		}
+		for k := range skillTypes {
+			knownTypes[k] = true
+		}
 	}
 	for _, ref := range refs {
 		name := strings.TrimPrefix(ref, "#/components/schemas/")
@@ -104,7 +117,7 @@ func run(args []string) error {
 			continue
 		}
 		if _, ok := knownTypes[name]; !ok {
-			return fmt.Errorf("spec references schema %q but apitypes has no such type", name)
+			return fmt.Errorf("spec references schema %q but apitypes/skills has no such type", name)
 		}
 	}
 
@@ -133,7 +146,7 @@ func collectRefs(spec map[string]any) []string {
 	return out
 }
 
-func collectApitypesTypes(dir string) (map[string]bool, error) {
+func collectTypesFromDir(dir string) (map[string]bool, error) {
 	out := map[string]bool{}
 	entries, err := os.ReadDir(dir)
 	if err != nil {

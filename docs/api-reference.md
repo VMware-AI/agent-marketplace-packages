@@ -56,6 +56,36 @@ marketplace-api 是一个**只读**的 HTTP 服务，把 `dist/` 目录暴露成
 | `bad_request` | 400 | 请求参数非法 |
 | `no_index` | 503 | dist/index.json 尚未加载 |
 | `internal_error` | 500 | 服务器内部错误 |
+| `already_exists` | 409 | skills 上传时 `(name, source, version)` 已存在 —— 版本不可覆盖 |
+| `too_large` | 413 | skills 上传超过 50 MiB 上限 |
+| `bad_content_type` | 415 | skills 上传未使用 `multipart/form-data` |
+| `bad_skill_zip` / `bad_filename` / `name_mismatch` / `version_mismatch` / `invalid_manifest` / `bad_channel` / `missing_file` / `bad_multipart` | 400 | skills 上传各阶段的语义错误 |
+
+---
+
+## Skills 端点
+
+Skills 存储在 `dist/skills/` 与 `dist/skills-index.json`，独立的命名空间 —— 与 agents 的路由、schema、磁盘布局完全分离。详见 [skills-api.md](skills-api.md) 与 [skill-md-schema.md](skill-md-schema.md)。
+
+| 方法 | 路径 | 说明 |
+|---|---|---|
+| `GET` | `/api/v1/skills[?source=X&channel=Y]` | 列出所有 skill（精简投影）。可选 `?channel` 把每个 skill 投影到该 channel 内最高 semver 版本；可选 `?source` 限定到单一 source。 |
+| `GET` | `/api/v1/skills/{source}` | 列出指定 source 下的所有 skill |
+| `GET` | `/api/v1/skills/{source}/{name}` | 单个 skill（所有版本，完整 body） |
+| `GET` | `/api/v1/skills/{source}/{name}/{version}` | 单个版本（完整 detail） |
+| `GET` | `/api/v1/skills/{source}/{name}/{version}/download` | 流式返回 zip（`application/zip`） |
+| `GET` | `/api/v1/skills/{source}/{name}/{version}/sha256` | sha256 副文件（`<hex>  <filename>\n`） |
+| `GET` | `/api/v1/skills/{source}/{name}/{version}/SKILL.md` | 从 zip 读出的原始 SKILL.md 字节（frontmatter + body，与发布时字节一致） |
+| `GET` | `/api/v1/skills-index.json` | 原始 `dist/skills-index.json`（调试用） |
+| `POST` | `/api/v1/skills` | 上传一个 skill zip（multipart，`file` 字段） |
+| `DELETE` | `/api/v1/skills/{source}/{name}` | 删除指定 source 下的所有版本 |
+| `DELETE` | `/api/v1/skills/{source}/{name}/{version}` | 删除指定版本 |
+
+`source` 合法值为 `community` 与 `internal`。channel 合法值为 `stable` / `beta` / `edge` / `internal`，`latest` 是 `stable` 的别名（npm 约定）。
+
+`POST /api/v1/skills` 强制：zip 文件名必须是 `<name>-<source>-<version>.zip`；服务端用文件名作为 `(name, source, version)` 三元组的权威标识，不读取 SKILL.md 内的 `name` 字段。重复上传同一三元组返回 409（不可变 —— 必须 bump version 才能发布补丁）。
+
+详细 status code 列表见 [skills-api.md](skills-api.md)。
 
 ---
 

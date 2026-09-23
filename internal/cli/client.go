@@ -93,8 +93,13 @@ func loadCredentials(path string) (string, error) {
 	return c.Password, nil
 }
 
-// do performs an authenticated GET and parses JSON into v.
-func (c *Client) do(path string, v any) error {
+// Do performs an authenticated GET and parses JSON into v. Exported so
+// sibling packages (skillscmd, etc.) can use the same Basic-Auth + TLS
+// + timeout-wrapped HTTP client without re-implementing it.
+//
+// Returns a typed error on 401 ("run `agentpkg login`") and surfaces
+// non-2xx responses as formatted errors with the body.
+func (c *Client) Do(path string, v any) error {
 	req, err := http.NewRequest(http.MethodGet, c.BaseURL+path, nil)
 	if err != nil {
 		return err
@@ -118,6 +123,10 @@ func (c *Client) do(path string, v any) error {
 	}
 	return json.NewDecoder(resp.Body).Decode(v)
 }
+
+// do is the internal alias kept so existing callers in the cli package
+// continue to compile. New code should use Do.
+func (c *Client) do(path string, v any) error { return c.Do(path, v) }
 
 // yamlUnmarshal is a thin wrapper to keep yaml imports localized.
 func yamlUnmarshal(data []byte, v any) error {

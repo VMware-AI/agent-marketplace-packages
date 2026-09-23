@@ -7,7 +7,15 @@ import (
 	"testing"
 
 	"github.com/VMware-AI/agent-marketplace-packages/internal/apitypes"
+	"github.com/VMware-AI/agent-marketplace-packages/internal/skills"
 )
+
+// skillsParseIdx is a tiny test helper for parsing a skills index JSON in
+// tests. Lives next to parseIdxOrFail (the agent counterpart) for symmetry.
+func skillsParseIdx(t *testing.T, raw []byte) (*skills.Index, error) {
+	t.Helper()
+	return skills.ParseIndexBytes(raw)
+}
 
 // parseIdxOrFail is a tiny test helper that bails out (t.Fatal) on any
 // parse error so individual cases stay one-line.
@@ -135,5 +143,195 @@ func TestDir_Validate_MismatchAndMissing(t *testing.T) {
 	}
 	if err := d.Validate(parseIdxOrFail(t, []byte(good))); err == nil {
 		t.Error("expected missing-tarball error, got nil")
+	}
+}
+
+// -----------------------------------------------------------------------
+// Skills layout tests (dist/skills/ + dist/skills-index.json).
+//
+// The skills layout is independent of the agent layout — these tests
+// verify the parallel accessors don't accidentally touch dist/ files and
+// that the empty-state behaviors (no skills dir, no skills index) are
+// "empty result, no error" rather than 404s.
+// -----------------------------------------------------------------------
+
+// writeValidSkillZip creates dist/skills/<name>-<source>-<version>.zip +
+// a .sha256 sidecar with the matching hash. Used by ValidateSkills tests.
+func writeValidSkillZip(t *testing.T, distDir, name, source, version string) (zipName, hexSum string) {
+	t.Helper()
+	skillsDir := filepath.Join(distDir, "skills")
+	if err := os.MkdirAll(skillsDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	zipName = name + "-" + source + "-" + version + ".zip"
+	zipPath := filepath.Join(skillsDir, zipName)
+	payload := []byte("skill zip payload for " + zipName)
+	if err := os.WriteFile(zipPath, payload, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	hexSum = FileSHA256Must(t, zipPath)
+	if err := os.WriteFile(zipPath+".sha256", []byte(hexSum+"  "+zipName+"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	return zipName, hexSum
+}
+
+// FileSHA256Must is a tiny wrapper used by the skills tests so each
+// test doesn't repeat the open/close ceremony.
+func FileSHA256Must(t *testing.T, path string) string {
+	t.Helper()
+	h, err := FileSHA256(path)
+	if err != nil {
+		t.Fatalf("FileSHA256(%s): %v", path, err)
+	}
+	return h
+}
+
+// TestDir_SkillsPath verifies the parallel directory layout matches the
+// plan: dist/skills/ for zips, dist/skills-index.json for the index.
+func TestDir_SkillsPath(t *testing.T) {
+	d := NewDir("/some/dist")
+	if got := d.SkillsPath(); got != "/some/dist/skills" {
+		t.Errorf("SkillsPath = %q", got)
+	}
+	if got := d.SkillsIndexPath(); got != "/some/dist/skills-index.json" {
+		t.Errorf("SkillsIndexPath = %q", got)
+	}
+	if got := d.SkillZipPath("foo-community-1.0.0.zip"); got != "/some/dist/skills/foo-community-1.0.0.zip" {
+		t.Errorf("SkillZipPath = %q", got)
+	}
+	if got := d.SkillSHA256Path("foo-community-1.0.0.zip"); got != "/some/dist/skills/foo-community-1.0.0.zip.sha256" {
+		t.Errorf("SkillSHA256Path = %q", got)
+	}
+}
+
+// TestDir_ListSkillZips_FiltersAndSorts: only *.zip, deterministic order.
+func TestDir_ListSkillZips_FiltersAndSorts(t *testing.T) {
+	dist := t.TempDir()
+	skillsDir := filepath.Join(dist, "skills")
+	if err := os.MkdirAll(skillsDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	for _, n := range []string{"c.zip", "a.zip", "b.zip", "notes.txt", "ignored.tar.gz"} {
+		if err := os.WriteFile(filepath.Join(skillsDir, n), []byte("x"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	got, err := NewDir(dist).ListSkillZips()
+	if err != nil {
+		t.Fatalf("ListSkillZips: %v", err)
+	}
+	want := []string{"a.zip", "b.zip", "c.zip"}
+	if len(got) != len(want) {
+		t.Fatalf("got %v, want %v", got, want)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Errorf("[%d] got %q want %q", i, got[i], want[i])
+		}
+	}
+}
+
+// TestDir_ListSkillZips_NoDir: missing dist/skills/ returns empty list,
+// not an error — the marketplace-api treats "no skills yet" as a valid state.
+func TestDir_ListSkillZips_NoDir(t *testing.T) {
+	dist := t.TempDir() // no skills/ subdir
+	got, err := NewDir(dist).ListSkillZips()
+	if err != nil {
+		t.Fatalf("ListSkillZips on missing dir: %v", err)
+	}
+	if len(got) != 0 {
+		t.Errorf("expected empty list, got %v", got)
+	}
+}
+
+// TestDir_LoadSkillsIndex_Missing returns an empty (not nil) Index with
+// the schema_version filled in. This is the marketplace-api startup path.
+func TestDir_LoadSkillsIndex_Missing(t *testing.T) {
+	dist := t.TempDir()
+	got, err := NewDir(dist).LoadSkillsIndex()
+	if err != nil {
+		t.Fatalf("LoadSkillsIndex on missing file: %v", err)
+	}
+	if got == nil {
+		t.Fatal("LoadSkillsIndex returned nil on missing file")
+	}
+	if got.Schema != "2.0" {
+		t.Errorf("Schema = %q, want 2.0", got.Schema)
+	}
+	if len(got.Skills) != 0 {
+		t.Errorf("expected empty Skills, got %d", len(got.Skills))
+	}
+}
+
+// TestDir_LoadSkillsIndex_Populated round-trips a small index on disk.
+func TestDir_LoadSkillsIndex_Populated(t *testing.T) {
+	dist := t.TempDir()
+	want := `{"generated_at":"2026-09-08","schema_version":"2.0","skills":[{"name":"hello","description":"hi","category":"dev","versions":[{"version":"1.0.0","source":"community","channel":"stable","agents":["all"],"install_method":"zip-extract","zip":{"filename":"hello-community-1.0.0.zip","size_bytes":3,"sha256":"sha256:abc"}}]}]}`
+	if err := os.WriteFile(filepath.Join(dist, "skills-index.json"), []byte(want), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	got, err := NewDir(dist).LoadSkillsIndex()
+	if err != nil {
+		t.Fatalf("LoadSkillsIndex: %v", err)
+	}
+	if len(got.Skills) != 1 || got.Skills[0].Name != "hello" {
+		t.Fatalf("unexpected skills: %+v", got.Skills)
+	}
+}
+
+// TestDir_LoadSkillsIndex_ParseError surfaces the underlying error so the
+// reload loop can log it.
+func TestDir_LoadSkillsIndex_ParseError(t *testing.T) {
+	dist := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dist, "skills-index.json"), []byte("{garbage"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := NewDir(dist).LoadSkillsIndex(); err == nil {
+		t.Fatal("expected error on malformed skills-index.json")
+	}
+}
+
+// TestDir_ValidateSkills_Good: zip + sidecar match index → no error.
+func TestDir_ValidateSkills_Good(t *testing.T) {
+	dist := t.TempDir()
+	zipName, hex := writeValidSkillZip(t, dist, "hello", "community", "1.0.0")
+	idxJSON := `{"generated_at":"","schema_version":"1.0","skills":[{"name":"hello","description":"hi","versions":[{"version":"1.0.0","source":"community","channel":"stable","zip":{"filename":"` + zipName + `","size_bytes":1,"sha256":"sha256:` + hex + `"}}]}]}`
+	idx, err := skillsParseIdx(t, []byte(idxJSON))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := NewDir(dist).ValidateSkills(idx); err != nil {
+		t.Errorf("good case: %v", err)
+	}
+}
+
+// TestDir_ValidateSkills_MissingZip: index references a zip that isn't
+// on disk → error.
+func TestDir_ValidateSkills_MissingZip(t *testing.T) {
+	dist := t.TempDir()
+	idxJSON := `{"generated_at":"","schema_version":"1.0","skills":[{"name":"hello","description":"hi","versions":[{"version":"1.0.0","source":"community","channel":"stable","zip":{"filename":"ghost-community-1.0.0.zip","size_bytes":0,"sha256":"sha256:` + strings.Repeat("0", 64) + `"}}]}]}`
+	idx, err := skillsParseIdx(t, []byte(idxJSON))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := NewDir(dist).ValidateSkills(idx); err == nil {
+		t.Fatal("expected missing-zip error, got nil")
+	}
+}
+
+// TestDir_ValidateSkills_ShaMismatch: sidecar hex differs from index hash.
+func TestDir_ValidateSkills_ShaMismatch(t *testing.T) {
+	dist := t.TempDir()
+	zipName, hex := writeValidSkillZip(t, dist, "hello", "community", "1.0.0")
+	// Build an index that claims a different hash.
+	wrong := strings.Repeat("9", 64)
+	idxJSON := `{"generated_at":"","schema_version":"1.0","skills":[{"name":"hello","description":"hi","versions":[{"version":"1.0.0","source":"community","channel":"stable","zip":{"filename":"` + zipName + `","size_bytes":1,"sha256":"sha256:` + wrong + `"}}]}]}`
+	idx, err := skillsParseIdx(t, []byte(idxJSON))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := NewDir(dist).ValidateSkills(idx); err == nil {
+		t.Errorf("expected sha256 mismatch error, got nil (real hash was %s)", hex)
 	}
 }

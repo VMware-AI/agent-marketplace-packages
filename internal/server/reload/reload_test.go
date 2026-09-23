@@ -28,13 +28,13 @@ func writeValidDist(t *testing.T) (distPath, tarballName, shaHex string) {
 	tarPath := filepath.Join(dir, tarName)
 	// Tarball content can be anything for these tests — Validate() only
 	// checks the .sha256 sidecar matches the index.json entry.
-	if err := os.WriteFile(tarPath, []byte("fake tarball bytes"), 0644); err != nil {
+	if err := os.WriteFile(tarPath, []byte("fake tarball bytes"), 0o644); err != nil {
 		t.Fatalf("write tarball: %v", err)
 	}
 	sum := sha256.Sum256([]byte("fake tarball bytes"))
 	hex := hex.EncodeToString(sum[:])
 	shaPath := tarPath + ".sha256"
-	if err := os.WriteFile(shaPath, []byte(hex+"  "+tarName+"\n"), 0644); err != nil {
+	if err := os.WriteFile(shaPath, []byte(hex+"  "+tarName+"\n"), 0o644); err != nil {
 		t.Fatalf("write sha256: %v", err)
 	}
 
@@ -67,7 +67,7 @@ func writeIndex(t *testing.T, dir string, idx apitypes.Index) error {
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(filepath.Join(dir, "index.json"), data, 0644)
+	return os.WriteFile(filepath.Join(dir, "index.json"), data, 0o644)
 }
 
 func quietLogger() *slog.Logger {
@@ -79,7 +79,7 @@ func quietLogger() *slog.Logger {
 func TestReload_HappyPath(t *testing.T) {
 	distDir, _, _ := writeValidDist(t)
 	dist := repo.NewDir(distDir)
-	s := server.NewState(dist, nil)
+	s := server.NewState(dist, nil, nil)
 
 	if err := Reload(s, dist, quietLogger()); err != nil {
 		t.Fatalf("Reload: %v", err)
@@ -97,11 +97,11 @@ func TestReload_HappyPath(t *testing.T) {
 // assert error and that the previously-published Index is unchanged.
 func TestReload_ParseError(t *testing.T) {
 	distDir, _, _ := writeValidDist(t)
-	if err := os.WriteFile(filepath.Join(distDir, "index.json"), []byte("{garbage"), 0644); err != nil {
+	if err := os.WriteFile(filepath.Join(distDir, "index.json"), []byte("{garbage"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	dist := repo.NewDir(distDir)
-	s := server.NewState(dist, nil)
+	s := server.NewState(dist, nil, nil)
 
 	// Seed a known good Index so we can detect the "not swapped" case.
 	originalIdx := &apitypes.Index{Agents: []apitypes.Agent{{Name: "original"}}}
@@ -143,7 +143,7 @@ func TestReload_ValidationError(t *testing.T) {
 	}
 
 	dist := repo.NewDir(distDir)
-	s := server.NewState(dist, nil)
+	s := server.NewState(dist, nil, nil)
 	originalIdx := &apitypes.Index{Agents: []apitypes.Agent{{Name: "original"}}}
 	s.SetIndex(originalIdx)
 
@@ -162,12 +162,12 @@ func TestReload_ValidationError(t *testing.T) {
 func TestMaybeReload_StatError(t *testing.T) {
 	distDir, _, _ := writeValidDist(t)
 	dist := repo.NewDir(distDir)
-	s := server.NewState(dist, nil)
+	s := server.NewState(dist, nil, nil)
 
 	if err := os.Remove(filepath.Join(distDir, "index.json")); err != nil {
 		t.Fatal(err)
 	}
-	fp, _ := InitialFingerprint(dist)
+	fp := InitialFingerprints(dist)
 
 	if err := MaybeReload(s, dist, &fp, quietLogger()); err != nil {
 		t.Fatalf("MaybeReload returned error on missing file: %v", err)
@@ -182,12 +182,9 @@ func TestMaybeReload_StatError(t *testing.T) {
 func TestMaybeReload_Idempotent(t *testing.T) {
 	distDir, _, _ := writeValidDist(t)
 	dist := repo.NewDir(distDir)
-	s := server.NewState(dist, nil)
+	s := server.NewState(dist, nil, nil)
 
-	fp, ok := InitialFingerprint(dist)
-	if !ok {
-		t.Fatal("InitialFingerprint failed")
-	}
+	fp := InitialFingerprints(dist)
 
 	if err := MaybeReload(s, dist, &fp, quietLogger()); err != nil {
 		t.Fatalf("first MaybeReload: %v", err)
@@ -207,7 +204,7 @@ func TestMaybeReload_Idempotent(t *testing.T) {
 func TestMaybeReload_SizeChanged(t *testing.T) {
 	distDir, _, _ := writeValidDist(t)
 	dist := repo.NewDir(distDir)
-	s := server.NewState(dist, nil)
+	s := server.NewState(dist, nil, nil)
 
 	if err := MaybeReload(s, dist, nil, quietLogger()); err != nil {
 		t.Fatalf("initial MaybeReload: %v", err)
@@ -242,13 +239,92 @@ func TestMaybeReload_SizeChanged(t *testing.T) {
 	}
 }
 
-// TestState_Concurrent: with -race, goroutine A spinning SetIndex on
+// TestMaybeReload_SkillsOnlyChange verifies that writing only
+// dist/skills-index.json (no change to dist/index.json) still triggers
+// a Reload — Reload is the cheap way to fan out to both reload paths.
+func TestMaybeReload_SkillsOnlyChange(t *testing.T) {
+	distDir, _, _ := writeValidDist(t)
+	// Pre-create dist/skills/<file>.zip + sidecar so ValidateSkills passes.
+	skillsDir := filepath.Join(distDir, "skills")
+	if err := os.MkdirAll(skillsDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	const zipName = "hello-community-1.0.0.zip"
+	const zipHex = "0000000000000000000000000000000000000000000000000000000000000000"
+	zipPath := filepath.Join(skillsDir, zipName)
+	if err := os.WriteFile(zipPath, []byte("payload"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(zipPath+".sha256", []byte(zipHex+"  "+zipName+"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	dist := repo.NewDir(distDir)
+	s := server.NewState(dist, nil, nil)
+
+	// Initial Reload — both indices are zero at this point.
+	if err := Reload(s, dist, quietLogger()); err != nil {
+		t.Fatal(err)
+	}
+	originalAgents := s.Index()
+
+	// Capture current fingerprints (no skills-index.json yet → fp.Skills
+	// is zero).
+	fp := InitialFingerprints(dist)
+	skillsJSON := `{"generated_at":"2026-09-08","schema_version":"1.0","skills":[{"name":"hello","description":"hi","versions":[{"version":"1.0.0","source":"community","channel":"stable","zip":{"filename":"hello-community-1.0.0.zip","size_bytes":7,"sha256":"sha256:` + zipHex + `"}}]}]}`
+	if err := os.WriteFile(filepath.Join(distDir, "skills-index.json"), []byte(skillsJSON), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := MaybeReload(s, dist, &fp, quietLogger()); err != nil {
+		t.Fatalf("MaybeReload after skills-index.json change: %v", err)
+	}
+	// SkillsIndex must now reflect the new file.
+	gotSkills := s.SkillsIndex()
+	if gotSkills == nil {
+		t.Fatal("SkillsIndex is nil after skills-only change")
+	}
+	if len(gotSkills.Skills) != 1 || gotSkills.Skills[0].Name != "hello" {
+		t.Errorf("unexpected skills: %+v", gotSkills.Skills)
+	}
+	// Agents index data should be unchanged (Reload re-fans-out, but the
+	// loaded data is the same).
+	if s.Index() != originalAgents && s.Index() == nil {
+		t.Errorf("agents index lost on skills-only change")
+	}
+}
+
+// TestMaybeReload_SkillsMissingFile: writing a malformed skills-index.json
+// does NOT fail the agents reload — skills errors are warnings.
+func TestMaybeReload_SkillsMissingFile(t *testing.T) {
+	distDir, _, _ := writeValidDist(t)
+	dist := repo.NewDir(distDir)
+	s := server.NewState(dist, nil, nil)
+	if err := Reload(s, dist, quietLogger()); err != nil {
+		t.Fatal(err)
+	}
+	// Drop garbage into skills-index.json. Agents index must still be
+	// served correctly (skills index stays at zero — no successful
+	// load yet).
+	if err := os.WriteFile(filepath.Join(distDir, "skills-index.json"), []byte("{garbage"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	fp := InitialFingerprints(dist)
+	if err := MaybeReload(s, dist, &fp, quietLogger()); err != nil {
+		t.Fatalf("MaybeReload must not fail on broken skills: %v", err)
+	}
+	if s.Index() == nil {
+		t.Error("agents index lost on broken skills")
+	}
+}
+
+// TestState_Concurrent: with -race, goroutine A spinning Reload on
 // freshly-parsed *apitypes.Index, goroutine B spinning s.Index().Agents
 // iteration. Run for a short time and ensure no race is detected.
 func TestState_Concurrent(t *testing.T) {
 	distDir, _, _ := writeValidDist(t)
 	dist := repo.NewDir(distDir)
-	s := server.NewState(dist, nil)
+	s := server.NewState(dist, nil, nil)
 	if err := Reload(s, dist, quietLogger()); err != nil {
 		t.Fatal(err)
 	}
@@ -298,7 +374,7 @@ func TestState_Concurrent(t *testing.T) {
 func TestState_DistImmutable(t *testing.T) {
 	distDir, _, _ := writeValidDist(t)
 	dist := repo.NewDir(distDir)
-	s := server.NewState(dist, nil)
+	s := server.NewState(dist, nil, nil)
 	before := s.Dist
 
 	if err := Reload(s, dist, quietLogger()); err != nil {
@@ -306,5 +382,20 @@ func TestState_DistImmutable(t *testing.T) {
 	}
 	if s.Dist != before {
 		t.Fatalf("Dist pointer changed across reload: %p vs %p", before, s.Dist)
+	}
+}
+
+// TestInitialFingerprints_PartialMissing: a fresh dist/ with no
+// skills-index.json should not error — the Skills slot stays zero.
+func TestInitialFingerprints_PartialMissing(t *testing.T) {
+	distDir, _, _ := writeValidDist(t)
+	// Note: no skills-index.json written.
+	dist := repo.NewDir(distDir)
+	fp := InitialFingerprints(dist)
+	if fp.Agents.mtime.IsZero() {
+		t.Error("Agents fingerprint should be set")
+	}
+	if !fp.Skills.mtime.IsZero() {
+		t.Error("Skills fingerprint should be zero when skills-index.json is missing")
 	}
 }
