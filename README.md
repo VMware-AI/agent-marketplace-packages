@@ -8,13 +8,16 @@
 
 | 组件 | 路径 | 用途 |
 |---|---|---|
-| `marketplace-api` (Go) | [cmd/marketplace-api](cmd/marketplace-api/) | 只读 HTTP 服务：暴露 `dist/` 为 JSON + tarball API |
-| `agentpkg` (Go) | [cmd/agentpkg](cmd/agentpkg/) | 双用途 CLI：VM 侧安装 / 打包方 authoring |
+| `marketplace-api` (Go) | [cmd/marketplace-api](cmd/marketplace-api/) | 只读 HTTP 服务：暴露 `dist/` 为 JSON + tarball API（agents）以及 `dist/skills/` 为 JSON + zip API（skills） |
+| `agentpkg` (Go) | [cmd/agentpkg](cmd/agentpkg/) | 双用途 CLI：agents 的 VM 侧安装 / 打包方 authoring；skills 的 author-side 构建 + repo-side 上传/下载 + consumer-side install |
 | 已打包的 agent | [agents/](agents/) | 三类 agent × 每个版本目录（含 manifest + install.sh + payload） |
+| 已打包的 skill | `dist/skills/` | ZIP 形式的 + skill zip + `.sha256` 副文件；SKILL.md frontmatter 兼容 Anthropic Skills |
 | 部署脚本与配置 | [deploy/](deploy/) | docker / docker-compose / systemd / 模板 config |
 | API + 协议文档 | [docs/](docs/) | API 参考、部署、CLI 手册、manifest schema 等 |
 
-`tools/*.sh` 是 shell 版本的辅助脚本，**保留过渡用**；新代码请用 `agentpkg package ...`。
+`tools/*.sh` 是 shell 版本的辅助脚本，**保留过渡用**；新代码请用 `agentpkg package ...` / `agentpkg skills ...`。
+
+> Skills 注册中心与 agents 注册中心**完全独立**：不同的包格式（zip + SKILL.md vs tar.gz + meta.yaml）、不同的 HTTP 路由、不同的 CLI 子命令、不共享类型。详见 [docs/skill-md-schema.md](docs/skill-md-schema.md) 与 [docs/skills-api.md](docs/skills-api.md)。
 
 ---
 
@@ -26,11 +29,13 @@
 agents/<n>/upstream/<v>/          marketplace-api (TLS+auth)
    manifest.json                      ↓ HTTP Basic Auth
    install.sh                         ↓
-   payload/                       dist/*.tar.gz
-   ↑                                   ↑
-   │                                   │
-agentpkg package build ──→ dist/ ←───  bind-mount
-agentpkg package reindex              │
+   payload/                       dist/*.tar.gz              (agents)
+                                   dist/skills/*.zip         (skills)
+   ↑                                   ↑   ↑
+   │                                   │   │
+agentpkg package build ──→ dist/ ←───  bind-mount (agents)
+agentpkg skills build    ──→ dist/skills/ ←─── bind-mount (skills)
+                                      │
                                       │
                               agentpkg CLI
                                       ↓
@@ -38,6 +43,9 @@ agentpkg package reindex              │
                                   bin/<agent>
                                   systemd --user unit
                                   ~/.local/state/<agent>.state.json
+                                  ~/.local/share/agentpkg/skills/<name>/<version>/
+                                  ~/.local/share/agentpkg/skills/<name>/latest → <version>
+                                  ~/.local/share/agentpkg/skills/<name>/state.json
 ```
 
 ---

@@ -113,11 +113,11 @@ func main() {
 
 	dist := repo.NewDir(distDir)
 
-	// Capture the on-disk fingerprint BEFORE the initial load. If a reindex
+	// Capture the on-disk fingerprints BEFORE the initial load. If a reindex
 	// lands between this stat and the LoadIndex below, the initial load will
 	// pick up the new file — which is exactly what we want. See
 	// internal/server/reload for the rationale.
-	fp, _ := reload.InitialFingerprint(dist)
+	fp := reload.InitialFingerprints(dist)
 
 	// Load + validate index.json at startup. Fail-fast: any error here
 	// means the dist/ directory is broken and we cannot serve traffic.
@@ -130,14 +130,21 @@ func main() {
 		logger.Error("validate dist/", "err", err)
 		os.Exit(1)
 	}
+
+	// Load skills index at startup. Missing file is NOT a fatal error —
+	// it's the normal "no skills yet" state. Other errors are warnings
+	// (logged inside reload.ReloadSkills).
+	sIdx, _ := dist.LoadSkillsIndex()
+
 	logger.Info("dist loaded",
 		"agents", len(idx.Agents),
 		"versions", totalVersions(idx),
+		"skills", len(sIdx.Skills),
 		"dist_dir", distDir,
 		"poll_interval", pollInterval.String(),
 	)
 
-	state := server.NewState(dist, idx)
+	state := server.NewState(dist, idx, sIdx)
 	handler := server.NewRouter(state, password, logger)
 
 	srv := &http.Server{
@@ -197,7 +204,7 @@ func runReloadLoop(
 	sighup <-chan os.Signal,
 	dist *repo.Dir,
 	state *server.State,
-	fp *reload.Fingerprint,
+	fp *reload.Fingerprints,
 	interval time.Duration,
 	logger *slog.Logger,
 ) {

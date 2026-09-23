@@ -12,6 +12,7 @@ import (
 
 	"github.com/VMware-AI/agent-marketplace-packages/internal/cli"
 	"github.com/VMware-AI/agent-marketplace-packages/internal/cli/packagecmd"
+	"github.com/VMware-AI/agent-marketplace-packages/internal/cli/skillscmd"
 	"github.com/spf13/cobra"
 )
 
@@ -36,6 +37,7 @@ func main() {
 	root.AddCommand(cli.NewUninstallCmd(&cfgPath, &credsPath))
 
 	root.AddCommand(newPackageCmd())
+	root.AddCommand(newSkillsCmd())
 
 	if err := root.Execute(); err != nil {
 		fmt.Fprintln(os.Stderr, err)
@@ -102,4 +104,14 @@ them, and refresh dist/index.json.`,
 	c.AddCommand(packagecmd.NewReindexCmd())
 	c.AddCommand(packagecmd.NewSignCmd())
 	return c
+}
+
+// newSkillsCmd returns the `skills` subcommand group. Implementation lives
+// in internal/cli/skillscmd so the wiring (init/build/verify/sign for
+// authors; list/show/download/upload/delete for consumers; install/
+// uninstall/list-installed for the local install layout) is colocated
+// with the command logic. See skillscmd.NewSkillsCmd for the full
+// command list.
+func newSkillsCmd() *cobra.Command {
+	return skillscmd.NewSkillsCmd(&cfgPath, &credsPath)
 }

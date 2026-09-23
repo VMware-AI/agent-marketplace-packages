@@ -46,9 +46,24 @@ build-agentpkg-linux: ## Cross-compile agentpkg for Linux (LINUX_ARCH=amd64|arm6
 	@mkdir -p $(BIN_DIR)
 	GOOS=linux GOARCH=$(LINUX_ARCH) $(GO) build -trimpath -ldflags="-s -w" -o $(BIN_DIR)/agentpkg-linux-$(LINUX_ARCH) ./cmd/agentpkg
 
+# Cross-compile marketplace-api for Linux. Standalone — no dependency on
+# `build` or `build-api`, since the host build isn't useful here and would
+# just waste a build slot. Override the arch from the CLI:
+#   make build-api-linux LINUX_ARCH=arm64
+#
+# Writes to $(BIN_DIR)/marketplace-api-linux-$(LINUX_ARCH), mirroring
+# `build-agentpkg-linux`. The previous `build-linux` recipe wrote to the
+# unsuffixed `bin/marketplace-api`, which silently clobbered the host
+# build when the two targets ran in parallel — the suffixed path makes
+# that collision impossible.
+.PHONY: build-api-linux
+build-api-linux: ## Cross-compile marketplace-api for Linux (LINUX_ARCH=amd64|arm64, default amd64)
+	@mkdir -p $(BIN_DIR)
+	GOOS=linux GOARCH=$(LINUX_ARCH) $(GO) build -trimpath -ldflags="-s -w" -o $(BIN_DIR)/marketplace-api-linux-$(LINUX_ARCH) ./cmd/marketplace-api
+
 .PHONY: build-linux
-build-linux: ## Cross-compile marketplace-api for Linux amd64
-	GOOS=linux GOARCH=amd64 $(MAKE) build-api
+build-linux: ## Cross-compile marketplace-api for Linux amd64 (alias for build-api-linux)
+	$(MAKE) build-api-linux
 
 # ---- Test ----
 .PHONY: test
@@ -69,8 +84,22 @@ openapi-embed: ## Copy docs/api/openapi.json → internal/server/openapi.json fo
 	cp docs/api/openapi.json internal/server/openapi.json
 
 .PHONY: openapi-check
-openapi-check: ## Validate docs/api/openapi.json matches embed copy + apitypes types + router paths
-	$(GO) run ./tools/openapi-check ./docs/api/openapi.json ./internal/server/openapi.json ./internal/apitypes
+openapi-check: ## Validate docs/api/openapi.json matches embed copy + apitypes/skills types + router paths
+	$(GO) run ./tools/openapi-check ./docs/api/openapi.json ./internal/server/openapi.json ./internal/apitypes ./internal/skills
+
+# ---- Skills smoke (Phase 10) ----
+# End-to-end exercise of the full skills lifecycle against a running
+# marketplace-api. Assumes `make build` has produced ./bin/{marketplace-api,agentpkg}.
+# Server is launched on 127.0.0.1:18443 against /tmp/skills-smoke/dist with
+# password "testpw" — both agent + server read from the same temp dir.
+.PHONY: skills-smoke
+skills-smoke: build ## Run end-to-end skills smoke test (author → repo → consumer → delete)
+	@./tools/skills-smoke.sh
+
+.PHONY: skills-smoke-clean
+skills-smoke-clean: ## Tear down /tmp/skills-smoke and stop the marketplace-api spawned by smoke
+	@rm -rf /tmp/skills-smoke
+	@pkill -f 'marketplace-api --config /tmp/skills-smoke/config.yaml' 2>/dev/null || true
 
 # ---- Container ----
 .PHONY: docker-run

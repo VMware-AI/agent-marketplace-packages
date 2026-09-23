@@ -9,16 +9,34 @@
     {
       "url": "https://{host}:8443",
       "variables": {
-        "host": { "default": "localhost", "description": "Hostname or IP of the marketplace-api instance." }
+        "host": {
+          "default": "localhost",
+          "description": "Hostname or IP of the marketplace-api instance."
+        }
       }
     }
   ],
   "tags": [
-    { "name": "health", "description": "Liveness probe — anonymous." },
-    { "name": "index", "description": "Discovery — list agents and versions." },
-    { "name": "agents", "description": "Per-agent detail." },
-    { "name": "artifacts", "description": "Tarball bytes, sha256 sidecar, config schema." },
-    { "name": "docs", "description": "This OpenAPI spec + Swagger UI." }
+    {
+      "name": "health",
+      "description": "Liveness probe — anonymous."
+    },
+    {
+      "name": "index",
+      "description": "Discovery — list agents and versions."
+    },
+    {
+      "name": "agents",
+      "description": "Per-agent detail."
+    },
+    {
+      "name": "artifacts",
+      "description": "Tarball bytes, sha256 sidecar, config schema."
+    },
+    {
+      "name": "docs",
+      "description": "This OpenAPI spec + Swagger UI."
+    }
   ],
   "components": {
     "securitySchemes": {
@@ -31,392 +49,1643 @@
     "schemas": {
       "Error": {
         "type": "object",
-        "required": ["error"],
+        "required": [
+          "error"
+        ],
         "properties": {
           "error": {
             "type": "object",
-            "required": ["code", "message"],
+            "required": [
+              "code",
+              "message"
+            ],
             "properties": {
-              "code": { "type": "string", "example": "not_found" },
-              "message": { "type": "string" },
-              "details": { "type": "object", "additionalProperties": true }
+              "code": {
+                "type": "string",
+                "example": "not_found"
+              },
+              "message": {
+                "type": "string"
+              },
+              "details": {
+                "type": "object",
+                "additionalProperties": true
+              }
             }
           }
         }
       },
       "IndexStripped": {
         "type": "object",
+        "description": "Card-grid projection: drops per-version Body / Inputs / Requires / EntryPoint. Optional ?channel=X projects to the latest semver version per skill in that channel.",
         "properties": {
-          "generated_at": { "type": "string" },
-          "schema_version": { "type": "string" },
-          "agents": { "type": "array", "items": { "$ref": "#/components/schemas/AgentStripped" } }
+          "generated_at": {
+            "type": "string"
+          },
+          "schema_version": {
+            "type": "string"
+          },
+          "skills": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/SkillStripped"
+            }
+          }
         }
       },
       "AgentStripped": {
         "type": "object",
         "properties": {
-          "name": { "type": "string" },
-          "display_name": { "type": "string" },
-          "description": { "type": "string" },
-          "logo": { "type": "string", "description": "Empty, http(s) URL, or data:image/...;base64,... — see meta-yaml-schema.md" },
-          "category": { "type": "string" },
-          "tags": { "type": "array", "items": { "type": "string" } },
-          "versions": { "type": "array", "items": { "$ref": "#/components/schemas/VersionStripped" } }
+          "name": {
+            "type": "string"
+          },
+          "display_name": {
+            "type": "string"
+          },
+          "description": {
+            "type": "string"
+          },
+          "logo": {
+            "type": "string",
+            "description": "Empty, http(s) URL, or data:image/...;base64,... — see meta-yaml-schema.md"
+          },
+          "category": {
+            "type": "string"
+          },
+          "tags": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "versions": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/VersionStripped"
+            }
+          },
+          "runtime_type": {
+            "type": "string",
+            "enum": [
+              "vm",
+              "container",
+              "k8s"
+            ],
+            "description": "Deployment target declared in meta.yaml — stable across all versions of the agent."
+          }
         }
       },
       "VersionStripped": {
         "type": "object",
         "properties": {
-          "version": { "type": "string" },
-          "source": { "type": "string", "enum": ["upstream", "ours"] },
-          "channel": { "type": "string", "enum": ["stable", "beta", "edge", "internal"] },
-          "released_at": { "type": "string" },
-          "tarball": { "$ref": "#/components/schemas/Tarball" }
+          "version": {
+            "type": "string"
+          },
+          "source": {
+            "type": "string",
+            "enum": [
+              "upstream",
+              "ours"
+            ]
+          },
+          "channel": {
+            "type": "string",
+            "enum": [
+              "stable",
+              "beta",
+              "edge",
+              "internal"
+            ]
+          },
+          "released_at": {
+            "type": "string"
+          },
+          "tarball": {
+            "$ref": "#/components/schemas/Tarball"
+          }
         }
       },
       "Tarball": {
         "type": "object",
         "properties": {
-          "filename": { "type": "string" },
-          "size_bytes": { "type": "integer", "format": "int64" },
-          "sha256": { "type": "string", "description": "Format: sha256:<hex>", "example": "sha256:fc78..." }
+          "filename": {
+            "type": "string"
+          },
+          "size_bytes": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "sha256": {
+            "type": "string",
+            "description": "Format: sha256:<hex>",
+            "example": "sha256:fc78..."
+          }
         }
       },
       "Agent": {
         "type": "object",
         "properties": {
-          "name": { "type": "string" },
-          "display_name": { "type": "string" },
-          "description": { "type": "string" },
-          "logo": { "type": "string", "description": "Empty, http(s) URL, or data:image/...;base64,... — see meta-yaml-schema.md" },
-          "category": { "type": "string" },
-          "tags": { "type": "array", "items": { "type": "string" } },
-          "versions": { "type": "array", "items": { "$ref": "#/components/schemas/Version" } }
+          "name": {
+            "type": "string"
+          },
+          "display_name": {
+            "type": "string"
+          },
+          "description": {
+            "type": "string"
+          },
+          "logo": {
+            "type": "string",
+            "description": "Empty, http(s) URL, or data:image/...;base64,... — see meta-yaml-schema.md"
+          },
+          "category": {
+            "type": "string"
+          },
+          "tags": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "versions": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Version"
+            }
+          },
+          "runtime_type": {
+            "type": "string",
+            "enum": [
+              "vm",
+              "container",
+              "k8s"
+            ],
+            "description": "Deployment target declared in meta.yaml — stable across all versions of the agent."
+          }
         }
       },
       "Version": {
         "type": "object",
         "properties": {
-          "version": { "type": "string" },
-          "source": { "type": "string" },
-          "channel": { "type": "string" },
-          "released_at": { "type": "string" },
-          "tarball": { "$ref": "#/components/schemas/Tarball" },
-          "manifest": { "$ref": "#/components/schemas/Manifest" }
+          "version": {
+            "type": "string"
+          },
+          "source": {
+            "type": "string"
+          },
+          "channel": {
+            "type": "string"
+          },
+          "released_at": {
+            "type": "string"
+          },
+          "tarball": {
+            "$ref": "#/components/schemas/Tarball"
+          },
+          "manifest": {
+            "$ref": "#/components/schemas/Manifest"
+          }
         }
       },
       "Manifest": {
         "type": "object",
         "properties": {
-          "schema_version": { "type": "string" },
-          "agent": { "type": "string" },
-          "source": { "type": "string" },
-          "version": { "type": "string" },
-          "channel": { "type": "string" },
-          "released_at": { "type": "string" },
-          "upstream": { "$ref": "#/components/schemas/Upstream" },
-          "fork_of": { "$ref": "#/components/schemas/ForkOf" },
-          "requires": { "$ref": "#/components/schemas/Requires" },
-          "runtime_requirements": { "type": "array", "items": { "$ref": "#/components/schemas/RuntimeRequirement" } },
-          "payload": { "type": "array", "items": { "$ref": "#/components/schemas/PayloadEntry" } },
-          "checksums": { "type": "object", "additionalProperties": { "type": "string" } },
-          "tarball": { "$ref": "#/components/schemas/TarballRef" },
-          "upgrade": { "$ref": "#/components/schemas/Upgrade" },
-          "scripts": { "$ref": "#/components/schemas/Scripts" },
-          "services": { "type": "array", "items": { "$ref": "#/components/schemas/ServiceSpec" } },
-          "configs": { "type": "array", "items": { "$ref": "#/components/schemas/ConfigSpec" } }
+          "schema_version": {
+            "type": "string"
+          },
+          "agent": {
+            "type": "string"
+          },
+          "source": {
+            "type": "string"
+          },
+          "version": {
+            "type": "string"
+          },
+          "channel": {
+            "type": "string"
+          },
+          "released_at": {
+            "type": "string"
+          },
+          "upstream": {
+            "$ref": "#/components/schemas/Upstream"
+          },
+          "fork_of": {
+            "$ref": "#/components/schemas/ForkOf"
+          },
+          "requires": {
+            "$ref": "#/components/schemas/Requires"
+          },
+          "runtime_requirements": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/RuntimeRequirement"
+            }
+          },
+          "payload": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/PayloadEntry"
+            }
+          },
+          "checksums": {
+            "type": "object",
+            "additionalProperties": {
+              "type": "string"
+            }
+          },
+          "tarball": {
+            "$ref": "#/components/schemas/TarballRef"
+          },
+          "upgrade": {
+            "$ref": "#/components/schemas/Upgrade"
+          },
+          "scripts": {
+            "$ref": "#/components/schemas/Scripts"
+          },
+          "services": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ServiceSpec"
+            }
+          },
+          "configs": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ConfigSpec"
+            }
+          }
         }
       },
       "Upstream": {
         "type": "object",
         "properties": {
-          "name": { "type": "string" },
-          "version": { "type": "string" },
-          "url": { "type": "string", "format": "uri" },
-          "sha256": { "type": "string" },
-          "notes": { "type": "string" }
+          "name": {
+            "type": "string"
+          },
+          "version": {
+            "type": "string"
+          },
+          "url": {
+            "type": "string",
+            "format": "uri"
+          },
+          "sha256": {
+            "type": "string"
+          },
+          "notes": {
+            "type": "string"
+          }
         }
       },
       "ForkOf": {
         "type": "object",
         "properties": {
-          "agent": { "type": "string" },
-          "version": { "type": "string" },
-          "source": { "type": "string" }
+          "agent": {
+            "type": "string"
+          },
+          "version": {
+            "type": "string"
+          },
+          "source": {
+            "type": "string"
+          }
         }
       },
       "Requires": {
         "type": "object",
+        "description": "Environment / tool requirements for running the skill.",
         "properties": {
-          "os": { "type": "array", "items": { "type": "string" } },
-          "arch": { "type": "array", "items": { "type": "string" } },
-          "system_packages": { "type": "array", "items": { "type": "string" } },
-          "system_tools": { "type": "array", "items": { "type": "string" } }
+          "os": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "enum": [
+                "linux",
+                "darwin",
+                "windows"
+              ]
+            }
+          },
+          "arch": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "enum": [
+                "amd64",
+                "arm64",
+                "386",
+                "arm"
+              ]
+            }
+          },
+          "tools": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "description": "basename, e.g. 'bash', 'jq'"
+            }
+          }
         }
       },
       "RuntimeRequirement": {
         "type": "object",
         "properties": {
-          "name": { "type": "string" },
-          "version": { "type": "string", "description": "Constraint expression understood by the agent's install.sh, e.g. '>=22.22.3 <23' or '>=3.12,<3.14'." },
-          "install_hint": { "type": "string" },
-          "verify_cmd": { "type": "string" }
+          "name": {
+            "type": "string"
+          },
+          "version": {
+            "type": "string",
+            "description": "Constraint expression understood by the agent's install.sh, e.g. '>=22.22.3 <23' or '>=3.12,<3.14'."
+          },
+          "install_hint": {
+            "type": "string"
+          },
+          "verify_cmd": {
+            "type": "string"
+          }
         }
       },
       "PayloadEntry": {
         "type": "object",
         "properties": {
-          "src": { "type": "string" },
-          "dst": { "type": "string" },
-          "mode": { "type": "string" }
+          "src": {
+            "type": "string"
+          },
+          "dst": {
+            "type": "string"
+          },
+          "mode": {
+            "type": "string"
+          }
         }
       },
       "TarballRef": {
         "type": "object",
         "properties": {
-          "filename": { "type": "string" },
-          "sha256": { "type": "string" }
+          "filename": {
+            "type": "string"
+          },
+          "sha256": {
+            "type": "string"
+          }
         }
       },
       "Upgrade": {
         "type": "object",
         "properties": {
-          "strategy": { "type": "string" },
-          "compatible_from": { "type": "array", "items": { "type": "string" } },
-          "migrations": { "type": "array", "items": { "$ref": "#/components/schemas/MigrationEntry" } }
+          "strategy": {
+            "type": "string"
+          },
+          "compatible_from": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "migrations": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/MigrationEntry"
+            }
+          }
         }
       },
       "MigrationEntry": {
         "type": "object",
         "properties": {
-          "from": { "type": "string" },
-          "script": { "type": "string" }
+          "from": {
+            "type": "string"
+          },
+          "script": {
+            "type": "string"
+          }
         }
       },
       "Scripts": {
         "type": "object",
         "properties": {
-          "install": { "type": "string" },
-          "uninstall": { "type": "string" }
+          "install": {
+            "type": "string"
+          },
+          "uninstall": {
+            "type": "string"
+          }
         }
       },
       "ServiceSpec": {
         "type": "object",
         "properties": {
-          "name": { "type": "string" },
-          "command": { "type": "array", "items": { "type": "string" } },
-          "args": { "type": "array", "items": { "type": "string" } },
-          "restart": { "type": "string", "enum": ["no", "on-failure", "always"] },
-          "working_dir": { "type": "string" },
-          "description": { "type": "string" }
+          "name": {
+            "type": "string"
+          },
+          "command": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "args": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "restart": {
+            "type": "string",
+            "enum": [
+              "no",
+              "on-failure",
+              "always"
+            ]
+          },
+          "working_dir": {
+            "type": "string"
+          },
+          "description": {
+            "type": "string"
+          }
         }
       },
       "ConfigSpec": {
         "type": "object",
         "properties": {
-          "name": { "type": "string" },
-          "file": { "type": "string" },
-          "render_to": { "type": "string" },
-          "mode": { "type": "string" },
-          "required_inputs": { "type": "array", "items": { "$ref": "#/components/schemas/InputField" } },
-          "optional_inputs": { "type": "object", "additionalProperties": { "$ref": "#/components/schemas/InputField" } },
-          "supported_providers": { "$ref": "#/components/schemas/SupportedProviders" }
+          "name": {
+            "type": "string"
+          },
+          "file": {
+            "type": "string"
+          },
+          "render_to": {
+            "type": "string"
+          },
+          "mode": {
+            "type": "string"
+          },
+          "required_inputs": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/InputField"
+            }
+          },
+          "optional_inputs": {
+            "type": "object",
+            "additionalProperties": {
+              "$ref": "#/components/schemas/InputField"
+            }
+          },
+          "supported_providers": {
+            "$ref": "#/components/schemas/SupportedProviders"
+          }
         }
       },
       "InputField": {
         "type": "object",
         "properties": {
-          "input_key": { "type": "string" },
-          "json_path": { "type": "string" },
-          "type": { "type": "string" },
-          "required_when": { "type": "string" },
-          "enum_values": { "type": "array", "items": { "type": "string" } },
-          "validate": { "type": "string" },
-          "dynamic_resolve": { "type": "string" }
+          "input_key": {
+            "type": "string"
+          },
+          "json_path": {
+            "type": "string"
+          },
+          "type": {
+            "type": "string"
+          },
+          "required_when": {
+            "type": "string"
+          },
+          "enum_values": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "validate": {
+            "type": "string"
+          },
+          "dynamic_resolve": {
+            "type": "string"
+          }
         }
       },
       "SupportedProviders": {
         "type": "object",
         "properties": {
-          "builtin": { "type": "array", "items": { "$ref": "#/components/schemas/BuiltinProvider" } },
-          "custom": { "$ref": "#/components/schemas/CustomProviderHint" }
+          "builtin": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/BuiltinProvider"
+            }
+          },
+          "custom": {
+            "$ref": "#/components/schemas/CustomProviderHint"
+          }
         }
       },
       "BuiltinProvider": {
         "type": "object",
         "properties": {
-          "id": { "type": "string" },
-          "api_key_env": { "type": "string" },
-          "auth": { "type": "string" },
-          "notes": { "type": "string" }
+          "id": {
+            "type": "string"
+          },
+          "api_key_env": {
+            "type": "string"
+          },
+          "auth": {
+            "type": "string"
+          },
+          "notes": {
+            "type": "string"
+          }
         }
       },
       "CustomProviderHint": {
         "type": "object",
         "properties": {
-          "description": { "type": "string" },
-          "npm_default": { "type": "string" }
+          "description": {
+            "type": "string"
+          },
+          "npm_default": {
+            "type": "string"
+          }
+        }
+      },
+      "Skill": {
+        "type": "object",
+        "description": "One skill entry. Skill-level fields are stable across all versions. Schema v2.0.",
+        "properties": {
+          "name": {
+            "type": "string",
+            "description": "kebab-case, ^[a-z0-9](?:[a-z0-9-]{0,62}[a-z0-9])?$"
+          },
+          "display_name": {
+            "type": "string"
+          },
+          "description": {
+            "type": "string",
+            "description": "1-1024 chars, no < or >"
+          },
+          "author": {
+            "type": "string"
+          },
+          "tags": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "license": {
+            "type": "string"
+          },
+          "homepage": {
+            "type": "string",
+            "description": "http(s) URL only"
+          },
+          "created_at": {
+            "type": "string",
+            "description": "YYYY-MM-DD"
+          },
+          "category": {
+            "type": "string",
+            "description": "Schema v2.0: skill's functional domain (ops, dev, data, search, media, content, integration, productivity, other)."
+          },
+          "versions": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/SkillVersion"
+            }
+          }
+        },
+        "required": ["name", "description", "category"]
+      },
+      "SkillStripped": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string"
+          },
+          "display_name": {
+            "type": "string"
+          },
+          "description": {
+            "type": "string"
+          },
+          "author": {
+            "type": "string"
+          },
+          "tags": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "license": {
+            "type": "string"
+          },
+          "homepage": {
+            "type": "string"
+          },
+          "created_at": {
+            "type": "string"
+          },
+          "category": {
+            "type": "string",
+            "description": "Schema v2.0: skill's functional domain."
+          },
+          "versions": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/SkillVersionStripped"
+            }
+          }
+        },
+        "required": ["category"]
+      },
+      "SkillVersion": {
+        "type": "object",
+        "description": "One (source, channel, version) entry. Immutable once uploaded (409 on conflict). Schema v2.0.",
+        "properties": {
+          "version": {
+            "type": "string",
+            "description": "Strict semver MAJOR.MINOR.PATCH[-prerelease]"
+          },
+          "source": {
+            "type": "string",
+            "enum": [
+              "community",
+              "internal"
+            ]
+          },
+          "channel": {
+            "type": "string",
+            "enum": [
+              "stable",
+              "beta",
+              "edge",
+              "internal"
+            ]
+          },
+          "released_at": {
+            "type": "string"
+          },
+          "requires": {
+            "$ref": "#/components/schemas/Requires"
+          },
+          "inputs": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Input"
+            }
+          },
+          "entry_point": {
+            "type": "string",
+            "description": "Path inside the zip"
+          },
+          "agents": {
+            "type": "array",
+            "description": "Schema v2.0: runtimes that recognize this skill payload. ['all'] for system-wide installs.",
+            "items": {
+              "type": "string",
+              "enum": ["opencode", "openclaw", "hermes", "all"]
+            }
+          },
+          "install_method": {
+            "type": "string",
+            "description": "Schema v2.0: install pipeline used by agentpkg skills install.",
+            "enum": ["zip-extract", "pip-wheel", "npm-pack", "tarball"],
+            "default": "zip-extract"
+          },
+          "install_paths": {
+            "type": "object",
+            "description": "Schema v2.0: per-agent path override. Keys are agent IDs; values are $HOME/$NAME templates.",
+            "additionalProperties": {
+              "type": "string"
+            }
+          },
+          "install_config": {
+            "type": "object",
+            "description": "Schema v2.0: per-method configuration. Shape depends on install_method.",
+            "additionalProperties": true
+          },
+          "zip": {
+            "$ref": "#/components/schemas/Zip"
+          },
+          "body": {
+            "type": "string",
+            "description": "Full SKILL.md text (frontmatter + body) embedded for UI convenience"
+          }
+        },
+        "required": ["agents", "install_method"]
+      },
+      "SkillVersionStripped": {
+        "type": "object",
+        "properties": {
+          "version": {
+            "type": "string"
+          },
+          "source": {
+            "type": "string"
+          },
+          "channel": {
+            "type": "string"
+          },
+          "released_at": {
+            "type": "string"
+          },
+          "agents": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "install_method": {
+            "type": "string"
+          },
+          "install_paths": {
+            "type": "object",
+            "additionalProperties": {
+              "type": "string"
+            }
+          },
+          "zip": {
+            "$ref": "#/components/schemas/Zip"
+          }
+        }
+      },
+      "Index": {
+        "type": "object",
+        "description": "Full content of dist/skills-index.json. Each Skill's Versions include the embedded SKILL.md body so UI list views don't need to unzip.",
+        "properties": {
+          "generated_at": {
+            "type": "string"
+          },
+          "schema_version": {
+            "type": "string"
+          },
+          "skills": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Skill"
+            }
+          }
+        }
+      },
+      "Input": {
+        "type": "object",
+        "description": "User-facing input field schema. Informational — runtime consumers decide whether to enforce.",
+        "properties": {
+          "name": {
+            "type": "string"
+          },
+          "description": {
+            "type": "string"
+          },
+          "required": {
+            "type": "boolean"
+          },
+          "type": {
+            "type": "string",
+            "enum": [
+              "string",
+              "integer",
+              "boolean",
+              "number",
+              "enum"
+            ]
+          },
+          "enum_values": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Required when type=enum"
+          },
+          "default": {
+            "type": "string"
+          }
+        }
+      },
+      "Zip": {
+        "type": "object",
+        "properties": {
+          "filename": {
+            "type": "string",
+            "description": "<name>-<source>-<version>.zip"
+          },
+          "size_bytes": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "sha256": {
+            "type": "string",
+            "description": "sha256:<hex>"
+          }
         }
       }
     }
   },
-  "security": [{ "basicAuth": [] }],
+  "security": [
+    {
+      "basicAuth": []
+    }
+  ],
   "paths": {
     "/api/v1/health": {
       "get": {
-        "tags": ["health"],
+        "tags": [
+          "health"
+        ],
         "summary": "Liveness probe",
         "description": "Anonymous — does not require auth. Returns 200 OK as long as the process is up and the dist/ index has loaded.",
         "security": [],
         "responses": {
           "200": {
             "description": "Server is alive.",
-            "content": { "application/json": { "schema": { "type": "object", "required": ["status","version"], "properties": { "status": {"type":"string","enum":["ok"]}, "version": {"type":"string"} } } } }
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "status",
+                    "version"
+                  ],
+                  "properties": {
+                    "status": {
+                      "type": "string",
+                      "enum": [
+                        "ok"
+                      ]
+                    },
+                    "version": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
           }
         }
       }
     },
     "/api/v1/index": {
       "get": {
-        "tags": ["index"],
+        "tags": [
+          "index"
+        ],
         "summary": "List all agents and versions (manifests stripped).",
         "responses": {
           "200": {
             "description": "OK.",
-            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/IndexStripped" } } }
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/IndexStripped"
+                }
+              }
+            }
           },
-          "401": { "$ref": "#/components/responses/Unauthorized" },
-          "503": { "$ref": "#/components/responses/ServiceUnavailable" }
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "503": {
+            "$ref": "#/components/responses/ServiceUnavailable"
+          }
         }
       }
     },
     "/api/v1/agents/{name}": {
       "get": {
-        "tags": ["agents"],
+        "tags": [
+          "agents"
+        ],
         "summary": "Get one agent (all versions, full manifests).",
-        "parameters": [{ "$ref": "#/components/parameters/AgentName" }],
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/AgentName"
+          }
+        ],
         "responses": {
           "200": {
             "description": "OK.",
-            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Agent" } } }
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Agent"
+                }
+              }
+            }
           },
-          "401": { "$ref": "#/components/responses/Unauthorized" },
-          "404": { "$ref": "#/components/responses/NotFound" }
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          }
         }
       }
     },
     "/api/v1/agents/{name}/{source}/{version}/manifest": {
       "get": {
-        "tags": ["agents"],
+        "tags": [
+          "agents"
+        ],
         "summary": "Get the full technical manifest.json for one (name, source, version).",
         "parameters": [
-          { "$ref": "#/components/parameters/AgentName" },
-          { "$ref": "#/components/parameters/Source" },
-          { "$ref": "#/components/parameters/Version" }
+          {
+            "$ref": "#/components/parameters/AgentName"
+          },
+          {
+            "$ref": "#/components/parameters/Source"
+          },
+          {
+            "$ref": "#/components/parameters/Version"
+          }
         ],
         "responses": {
           "200": {
             "description": "OK.",
-            "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Manifest" } } }
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Manifest"
+                }
+              }
+            }
           },
-          "401": { "$ref": "#/components/responses/Unauthorized" },
-          "404": { "$ref": "#/components/responses/NotFound" }
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          }
         }
       }
     },
     "/api/v1/agents/{name}/{source}/{version}/tarball": {
       "get": {
-        "tags": ["artifacts"],
+        "tags": [
+          "artifacts"
+        ],
         "summary": "Stream the tarball bytes (application/gzip).",
         "parameters": [
-          { "$ref": "#/components/parameters/AgentName" },
-          { "$ref": "#/components/parameters/Source" },
-          { "$ref": "#/components/parameters/Version" }
+          {
+            "$ref": "#/components/parameters/AgentName"
+          },
+          {
+            "$ref": "#/components/parameters/Source"
+          },
+          {
+            "$ref": "#/components/parameters/Version"
+          }
         ],
         "responses": {
           "200": {
             "description": "Tarball bytes.",
-            "content": { "application/gzip": { "schema": { "type": "string", "format": "binary" } } }
+            "content": {
+              "application/gzip": {
+                "schema": {
+                  "type": "string",
+                  "format": "binary"
+                }
+              }
+            }
           },
-          "401": { "$ref": "#/components/responses/Unauthorized" },
-          "404": { "$ref": "#/components/responses/NotFound" }
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          }
         }
       }
     },
     "/api/v1/agents/{name}/{source}/{version}/sha256": {
       "get": {
-        "tags": ["artifacts"],
+        "tags": [
+          "artifacts"
+        ],
         "summary": "Get the sha256 sidecar (sha256sum-format text/plain).",
         "parameters": [
-          { "$ref": "#/components/parameters/AgentName" },
-          { "$ref": "#/components/parameters/Source" },
-          { "$ref": "#/components/parameters/Version" }
+          {
+            "$ref": "#/components/parameters/AgentName"
+          },
+          {
+            "$ref": "#/components/parameters/Source"
+          },
+          {
+            "$ref": "#/components/parameters/Version"
+          }
         ],
         "responses": {
           "200": {
             "description": "sha256 sidecar text.",
-            "content": { "text/plain": { "schema": { "type": "string", "example": "fc78...  opencode-upstream-1.18.9.tar.gz\n" } } }
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string",
+                  "example": "fc78...  opencode-upstream-1.18.9.tar.gz\n"
+                }
+              }
+            }
           },
-          "401": { "$ref": "#/components/responses/Unauthorized" },
-          "404": { "$ref": "#/components/responses/NotFound" }
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          }
         }
       }
     },
     "/api/v1/agents/{name}/{source}/{version}/config-schema": {
       "get": {
-        "tags": ["artifacts"],
+        "tags": [
+          "artifacts"
+        ],
         "summary": "Get the admin-layer config schema for one version (required/optional inputs + supported LLM providers).",
         "parameters": [
-          { "$ref": "#/components/parameters/AgentName" },
-          { "$ref": "#/components/parameters/Source" },
-          { "$ref": "#/components/parameters/Version" }
+          {
+            "$ref": "#/components/parameters/AgentName"
+          },
+          {
+            "$ref": "#/components/parameters/Source"
+          },
+          {
+            "$ref": "#/components/parameters/Version"
+          }
         ],
         "responses": {
           "200": {
             "description": "OK.",
-            "content": { "application/json": { "schema": { "type": "object", "properties": { "agent": {"type":"string"}, "source": {"type":"string"}, "version": {"type":"string"}, "configs": {"type":"array","items":{"$ref":"#/components/schemas/ConfigSpec"}} } } } }
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "agent": {
+                      "type": "string"
+                    },
+                    "source": {
+                      "type": "string"
+                    },
+                    "version": {
+                      "type": "string"
+                    },
+                    "configs": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/components/schemas/ConfigSpec"
+                      }
+                    }
+                  }
+                }
+              }
+            }
           },
-          "401": { "$ref": "#/components/responses/Unauthorized" },
-          "404": { "$ref": "#/components/responses/NotFound" }
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          }
         }
       }
     },
     "/api/v1/index.json": {
       "get": {
-        "tags": ["index"],
+        "tags": [
+          "index"
+        ],
         "summary": "Raw dist/index.json (debug). Includes the full per-version manifest payload.",
         "responses": {
           "200": {
             "description": "OK.",
-            "content": { "application/json": { "schema": { "type": "object" } } }
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
           },
-          "401": { "$ref": "#/components/responses/Unauthorized" },
-          "503": { "$ref": "#/components/responses/ServiceUnavailable" }
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "503": {
+            "$ref": "#/components/responses/ServiceUnavailable"
+          }
         }
       }
     },
     "/swagger": {
       "get": {
-        "tags": ["docs"],
+        "tags": [
+          "docs"
+        ],
         "summary": "Swagger UI HTML.",
         "security": [],
         "responses": {
           "200": {
             "description": "HTML.",
-            "content": { "text/html": { "schema": { "type": "string" } } }
+            "content": {
+              "text/html": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
           }
         }
       }
     },
     "/swagger/openapi.json": {
       "get": {
-        "tags": ["docs"],
+        "tags": [
+          "docs"
+        ],
         "summary": "Raw OpenAPI 3.0.3 spec.",
         "security": [],
         "responses": {
           "200": {
             "description": "OK.",
-            "content": { "application/json": { "schema": { "type": "object" } } }
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/skills": {
+      "get": {
+        "tags": [
+          "skills"
+        ],
+        "summary": "List all skills (stripped index).",
+        "description": "Optional ?source=community|internal filters to one source. Optional ?channel=stable|beta|edge|internal|latest projects each skill to its highest-semver version in that channel (latest is an alias for stable, npm-style). Default channel=stable.",
+        "parameters": [
+          {
+            "name": "source",
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "community",
+                "internal"
+              ]
+            }
+          },
+          {
+            "name": "channel",
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "stable",
+                "beta",
+                "edge",
+                "internal",
+                "latest"
+              ]
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/IndexStripped"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "503": {
+            "$ref": "#/components/responses/ServiceUnavailable"
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "skills"
+        ],
+        "summary": "Upload a skill zip (multipart/form-data, file field).",
+        "description": "The zip filename must be <name>-<source>-<version>.zip; the server uses the filename as the authoritative identity (not the SKILL.md frontmatter). Re-uploading the same (name, source, version) returns 409. Body cap: 50 MiB.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "multipart/form-data": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "file": {
+                    "type": "string",
+                    "format": "binary",
+                    "description": "The skill zip."
+                  }
+                },
+                "required": [
+                  "file"
+                ]
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "channel",
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "stable",
+                "beta",
+                "edge",
+                "internal"
+              ],
+              "default": "stable"
+            }
+          }
+        ],
+        "responses": {
+          "201": {
+            "description": "Created.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SkillVersion"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "409": {
+            "$ref": "#/components/responses/Conflict"
+          },
+          "413": {
+            "$ref": "#/components/responses/PayloadTooLarge"
+          },
+          "415": {
+            "$ref": "#/components/responses/UnsupportedMediaType"
+          }
+        }
+      }
+    },
+    "/api/v1/skills/{source}": {
+      "get": {
+        "tags": [
+          "skills"
+        ],
+        "summary": "List all skills under one source.",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/SkillSource"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/IndexStripped"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "503": {
+            "$ref": "#/components/responses/ServiceUnavailable"
+          }
+        }
+      }
+    },
+    "/api/v1/skills/{source}/{name}": {
+      "get": {
+        "tags": [
+          "skills"
+        ],
+        "summary": "Get one skill (all versions, full detail).",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/SkillSource"
+          },
+          {
+            "$ref": "#/components/parameters/SkillName"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Skill"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "503": {
+            "$ref": "#/components/responses/ServiceUnavailable"
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "skills"
+        ],
+        "summary": "Delete every version of a skill under one source.",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/SkillSource"
+          },
+          {
+            "$ref": "#/components/parameters/SkillName"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "deleted": {
+                      "oneOf": [
+                        {
+                          "type": "string"
+                        },
+                        {
+                          "type": "array",
+                          "items": {
+                            "type": "string"
+                          }
+                        }
+                      ]
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          }
+        }
+      }
+    },
+    "/api/v1/skills/{source}/{name}/{version}": {
+      "get": {
+        "tags": [
+          "skills"
+        ],
+        "summary": "Get one skill version (full detail).",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/SkillSource"
+          },
+          {
+            "$ref": "#/components/parameters/SkillName"
+          },
+          {
+            "$ref": "#/components/parameters/SkillVersion"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SkillVersion"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "503": {
+            "$ref": "#/components/responses/ServiceUnavailable"
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "skills"
+        ],
+        "summary": "Delete one (source, name, version) entry.",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/SkillSource"
+          },
+          {
+            "$ref": "#/components/parameters/SkillName"
+          },
+          {
+            "$ref": "#/components/parameters/SkillVersion"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "deleted": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          }
+        }
+      }
+    },
+    "/api/v1/skills/{source}/{name}/{version}/download": {
+      "get": {
+        "tags": [
+          "skills"
+        ],
+        "summary": "Stream the skill zip bytes (application/zip).",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/SkillSource"
+          },
+          {
+            "$ref": "#/components/parameters/SkillName"
+          },
+          {
+            "$ref": "#/components/parameters/SkillVersion"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK.",
+            "content": {
+              "application/zip": {
+                "schema": {
+                  "type": "string",
+                  "format": "binary"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "503": {
+            "$ref": "#/components/responses/ServiceUnavailable"
+          }
+        }
+      }
+    },
+    "/api/v1/skills/{source}/{name}/{version}/sha256": {
+      "get": {
+        "tags": [
+          "skills"
+        ],
+        "summary": "sha256 sidecar text (<hex>  <filename>\\n) for sha256sum(1) verification.",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/SkillSource"
+          },
+          {
+            "$ref": "#/components/parameters/SkillName"
+          },
+          {
+            "$ref": "#/components/parameters/SkillVersion"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK.",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "503": {
+            "$ref": "#/components/responses/ServiceUnavailable"
+          }
+        }
+      }
+    },
+    "/api/v1/skills/{source}/{name}/{version}/SKILL.md": {
+      "get": {
+        "tags": [
+          "skills"
+        ],
+        "summary": "Raw SKILL.md (frontmatter + body) read byte-identical from the zip.",
+        "description": "Distinct from SkillVersion.Body which is parsed YAML+Markdown; this endpoint serves the original bytes for diff tools.",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/SkillSource"
+          },
+          {
+            "$ref": "#/components/parameters/SkillName"
+          },
+          {
+            "$ref": "#/components/parameters/SkillVersion"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK.",
+            "content": {
+              "text/markdown": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "503": {
+            "$ref": "#/components/responses/ServiceUnavailable"
+          }
+        }
+      }
+    },
+    "/api/v1/skills-index.json": {
+      "get": {
+        "tags": [
+          "skills"
+        ],
+        "summary": "Raw dist/skills-index.json (debug).",
+        "responses": {
+          "200": {
+            "description": "OK.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Index"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "503": {
+            "$ref": "#/components/responses/ServiceUnavailable"
           }
         }
       }
@@ -427,33 +1696,129 @@
       "name": "name",
       "in": "path",
       "required": true,
-      "schema": { "type": "string" }
+      "schema": {
+        "type": "string"
+      }
     },
     "Source": {
       "name": "source",
       "in": "path",
       "required": true,
-      "schema": { "type": "string", "enum": ["upstream", "ours"] }
+      "schema": {
+        "type": "string",
+        "enum": [
+          "upstream",
+          "ours"
+        ]
+      }
     },
     "Version": {
       "name": "version",
       "in": "path",
       "required": true,
-      "schema": { "type": "string" }
+      "schema": {
+        "type": "string"
+      }
+    },
+    "SkillSource": {
+      "name": "source",
+      "in": "path",
+      "required": true,
+      "schema": {
+        "type": "string",
+        "enum": [
+          "community",
+          "internal"
+        ]
+      }
+    },
+    "SkillName": {
+      "name": "name",
+      "in": "path",
+      "required": true,
+      "schema": {
+        "type": "string"
+      }
+    },
+    "SkillVersion": {
+      "name": "version",
+      "in": "path",
+      "required": true,
+      "schema": {
+        "type": "string"
+      }
     }
   },
   "responses": {
     "Unauthorized": {
       "description": "Missing or invalid credentials.",
-      "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } }
+      "content": {
+        "application/json": {
+          "schema": {
+            "$ref": "#/components/schemas/Error"
+          }
+        }
+      }
     },
     "NotFound": {
       "description": "Resource not found.",
-      "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } }
+      "content": {
+        "application/json": {
+          "schema": {
+            "$ref": "#/components/schemas/Error"
+          }
+        }
+      }
     },
     "ServiceUnavailable": {
       "description": "Index not loaded yet.",
-      "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } }
+      "content": {
+        "application/json": {
+          "schema": {
+            "$ref": "#/components/schemas/Error"
+          }
+        }
+      }
+    },
+    "BadRequest": {
+      "description": "Malformed request (missing multipart file, name mismatch between filename and SKILL.md, invalid channel, etc).",
+      "content": {
+        "application/json": {
+          "schema": {
+            "$ref": "#/components/schemas/Error"
+          }
+        }
+      }
+    },
+    "Conflict": {
+      "description": "(name, source, version) already exists. Skill versions are immutable — bump the version to publish a fix.",
+      "content": {
+        "application/json": {
+          "schema": {
+            "$ref": "#/components/schemas/Error"
+          }
+        }
+      }
+    },
+    "PayloadTooLarge": {
+      "description": "Upload exceeds the 50 MiB skill-zip cap.",
+      "content": {
+        "application/json": {
+          "schema": {
+            "$ref": "#/components/schemas/Error"
+          }
+        }
+      }
+    },
+    "UnsupportedMediaType": {
+      "description": "POST must use multipart/form-data with a 'file' field.",
+      "content": {
+        "application/json": {
+          "schema": {
+            "$ref": "#/components/schemas/Error"
+          }
+        }
+      }
     }
   }
 }

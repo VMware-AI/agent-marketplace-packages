@@ -45,6 +45,18 @@ agentpkg [--config <path>] [--credentials <path>] [--version] <subcommand> [...]
 | `package build` | 打 tarball + sha256 侧车 | author-side |
 | `package reindex` | 重扫 dist/ 写 index.json | author-side |
 | `package sign` | gpg --detach-sign 签名 | author-side |
+| `skills init` | scaffold 新 skill 目录（Anthropic 兼容） | author-side |
+| `skills verify` | 校验 SKILL.md frontmatter | author-side |
+| `skills build` | 打 zip + sha256 侧车 + 刷新 skills-index.json | author-side |
+| `skills sign` | gpg --detach-sign 一个 skill zip | author-side |
+| `skills list` | 列出 registry 内的 skill | repo-side |
+| `skills show` | 看单个 skill 的详情（含所有版本） | repo-side |
+| `skills download` | 下载 skill zip + sha256 侧车 | repo-side |
+| `skills upload` | 上传 skill zip 到 registry | repo-side |
+| `skills delete` | 删除 skill 或其中一个版本 | repo-side |
+| `skills install` | 下载 + 解压 + 写 state.json 到本地 | consumer-side |
+| `skills uninstall` | 删除本地 skill（或其中一个版本） | consumer-side |
+| `skills list-installed` | 列出本地已安装的 skill | consumer-side |
 
 ---
 
@@ -292,6 +304,74 @@ agentpkg package sign dist/opencode-upstream-1.18.9.tar.gz --key <GPG_KEY_ID>
 ```
 
 透传 `gpg --detach-sign --armor`。未提供 `--key` 时使用 GPG 默认 key。
+
+---
+
+## Skills 子命令
+
+Skills 子系统与 agents 完全独立 —— 不同的包格式（zip + SKILL.md frontmatter）、不同的 HTTP 路由（`/api/v1/skills/...`）、不同的本地安装目录（`~/.local/share/agentpkg/skills/`）。详细 schema 见 [skill-md-schema.md](skill-md-schema.md)；HTTP API 见 [skills-api.md](skills-api.md)；安装目录约定见 [skills-install-layout.md](skills-install-layout.md)。
+
+### 作者侧（无需鉴权）
+
+```bash
+# 1. 初始化一个 skill 目录
+agentpkg skills init hello
+
+# 2. 校验 SKILL.md frontmatter
+agentpkg skills verify skills/hello
+
+# 3. 打包成 zip（zip 文件名 = <name>-<source>-<version>.zip）
+agentpkg skills build skills/hello --version 0.1.0
+
+# 产物：
+#   dist/skills/hello-community-0.1.0.zip
+#   dist/skills/hello-community-0.1.0.zip.sha256
+#   dist/skills-index.json  (重写)
+```
+
+### 仓库侧（与 marketplace-api 通信）
+
+```bash
+# 4. 鉴权（同 agent 流程）
+agentpkg login --server https://marketplace.example.com:8443 \
+               --password-file <(echo "$PW")
+
+# 5. 列出 + 上传 + 验证
+agentpkg skills list
+agentpkg skills upload dist/skills/hello-community-0.1.0.zip
+agentpkg skills show hello
+agentpkg skills download hello -o /tmp/hello.zip
+
+# 6. 多版本 + channel 解析
+agentpkg skills build skills/hello --version 0.2.0 --channel beta
+agentpkg skills upload dist/skills/hello-community-0.2.0.zip
+agentpkg skills list --channel beta
+agentpkg skills list --channel stable
+
+# 7. 删除
+agentpkg skills delete hello --source community --version 0.1.0
+agentpkg skills delete hello --source community   # 删所有版本
+```
+
+### 消费侧（本地文件系统操作）
+
+```bash
+# 8. 安装（下载 + 校验 + 解压 + 写 state.json + 更新 latest 软链接）
+agentpkg skills install hello
+# 默认：~/.local/share/agentpkg/skills/hello/0.1.0/
+
+# 离线安装（本地 zip）
+agentpkg skills install hello --from dist/skills/hello-community-0.1.0.zip
+
+# 9. 列出本地已安装
+agentpkg skills list-installed
+
+# 10. 卸载
+agentpkg skills uninstall hello --version 0.1.0   # 单版本
+agentpkg skills uninstall hello                      # 全部
+```
+
+Skill 上传后不能覆盖同一 `(name, source, version)` —— 必须 bump version 才能发布补丁（409 不可变性，npm 风格）。
 
 ---
 

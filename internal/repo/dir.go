@@ -4,11 +4,17 @@
 // dist/ layout (tarballs + sha256 + index.json) and the in-memory apitypes.Index.
 // In agentpkg (client), repo provides the same loaders for index.json used by
 // `package build` and `package reindex`.
+//
+// The same Dir also serves the parallel skills layout (dist/skills/ +
+// dist/skills-index.json) via the SkillsPath / LoadSkillsIndex /
+// ValidateSkills / ListSkillZips methods. The two layouts are kept
+// completely separate — agents and skills never share files.
 package repo
 
 import (
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -18,6 +24,7 @@ import (
 
 	"github.com/VMware-AI/agent-marketplace-packages/internal/apitypes"
 	"github.com/VMware-AI/agent-marketplace-packages/internal/manifest"
+	"github.com/VMware-AI/agent-marketplace-packages/internal/skills"
 	"gopkg.in/yaml.v3"
 )
 
@@ -160,4 +167,117 @@ func FileSHA256(path string) (string, error) {
 		return "", err
 	}
 	return hex.EncodeToString(h.Sum(nil)), nil
+}
+
+// -----------------------------------------------------------------------
+// Skills layout (dist/skills/ + dist/skills-index.json).
+//
+// The skills subsystem is independent of the agent subsystem — it has its
+// own directory (dist/skills/), its own index file (dist/skills-index.json),
+// its own sidecar format (.zip.sha256 — same sha256sum format as the
+// agent tarballs). The methods below mirror the agent-facing ones above.
+// -----------------------------------------------------------------------
+
+// skillsDir is the on-disk subdirectory name under dist/ that holds
+// individual skill zips. Kept as a const so callers and tests stay in sync.
+const skillsDirName = "skills"
+
+// skillsIndexName is the on-disk filename for the skills index, parallel
+// to dist/index.json for agents.
+const skillsIndexName = "skills-index.json"
+
+// SkillsPath returns the absolute path to dist/skills/.
+func (d *Dir) SkillsPath() string {
+	return filepath.Join(d.Path, skillsDirName)
+}
+
+// SkillsIndexPath returns the absolute path to dist/skills-index.json.
+func (d *Dir) SkillsIndexPath() string {
+	return filepath.Join(d.Path, skillsIndexName)
+}
+
+// SkillZipPath returns the absolute path of a skill zip inside dist/skills/.
+func (d *Dir) SkillZipPath(filename string) string {
+	return filepath.Join(d.SkillsPath(), filename)
+}
+
+// SkillSHA256Path returns the absolute path of a .sha256 sidecar for a
+// given skill zip (filename + ".sha256", stored next to the zip).
+func (d *Dir) SkillSHA256Path(filename string) string {
+	return d.SkillZipPath(filename + ".sha256")
+}
+
+// ListSkillZips returns all *.zip filenames under dist/skills/, sorted.
+// Returns an empty slice (not an error) if dist/skills/ does not yet exist —
+// that's the normal "no skills uploaded yet" state.
+func (d *Dir) ListSkillZips() ([]string, error) {
+	entries, err := os.ReadDir(d.SkillsPath())
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("read dist/skills/: %w", err)
+	}
+	var out []string
+	for _, e := range entries {
+		if e.IsDir() {
+			continue
+		}
+		if strings.HasSuffix(e.Name(), ".zip") {
+			out = append(out, e.Name())
+		}
+	}
+	sort.Strings(out)
+	return out, nil
+}
+
+// LoadSkillsIndex reads dist/skills-index.json. Returns an empty
+// *skills.Index (not an error) when the file does not yet exist — that's
+// the normal startup state for a fresh dist/skills/. Other IO or parse
+// errors are returned as-is.
+//
+// Caller MUST treat the returned *skills.Index as immutable once published
+// via State.SetSkillsIndex — see the same contract on State.Index().
+func (d *Dir) LoadSkillsIndex() (*skills.Index, error) {
+	data, err := os.ReadFile(d.SkillsIndexPath())
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			// Empty index — schema_version matches IndexSchemaVersion.
+			return &skills.Index{Schema: skills.IndexSchemaVersion}, nil
+		}
+		return nil, fmt.Errorf("read %s: %w", skillsIndexName, err)
+	}
+	return skills.ParseIndexBytes(data)
+}
+
+// ValidateSkills performs integrity checks on dist/skills/ + dist/skills-index.json:
+// every skill version referenced in the index must have a corresponding
+// .zip on disk AND a .zip.sha256 sidecar whose hex matches the index entry.
+// Mirrors Dir.Validate() for agents; called at marketplace-api startup.
+func (d *Dir) ValidateSkills(idx *skills.Index) error {
+	for _, s := range idx.Skills {
+		for _, v := range s.Versions {
+			filename := v.Zip.Filename
+			zipPath := d.SkillZipPath(filename)
+			if _, err := os.Stat(zipPath); err != nil {
+				return fmt.Errorf("missing skill zip %s for %s/%s/%s: %w",
+					filename, s.Name, v.Source, v.Version, err)
+			}
+			expectedHex := strings.TrimPrefix(v.Zip.SHA256, "sha256:")
+			sidecarPath := d.SkillSHA256Path(filename)
+			data, err := os.ReadFile(sidecarPath)
+			if err != nil {
+				return fmt.Errorf("read sha256 sidecar for %s: %w", filename, err)
+			}
+			fields := strings.Fields(string(data))
+			if len(fields) < 1 {
+				return fmt.Errorf("sha256 sidecar %s malformed", sidecarPath)
+			}
+			if fields[0] != expectedHex {
+				return fmt.Errorf("sha256 mismatch for %s: expected %s, got %s",
+					filename, expectedHex, fields[0])
+			}
+		}
+	}
+	return nil
 }
