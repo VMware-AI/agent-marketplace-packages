@@ -188,13 +188,17 @@ func FileSHA256Must(t *testing.T, path string) string {
 }
 
 // TestDir_SkillsPath verifies the parallel directory layout matches the
-// plan: dist/skills/ for zips, dist/skills-index.json for the index.
+// plan: <SkillsRoot>/ for zips, <SkillsRoot>/skills-index.json for the
+// index. NewDir's default SkillsRoot is <dist>/skills, so zips land at
+// /some/dist/skills/*.zip and the index at
+// /some/dist/skills/skills-index.json. Use NewDirEx to relocate the
+// SkillsRoot (the recommended deployment shape).
 func TestDir_SkillsPath(t *testing.T) {
 	d := NewDir("/some/dist")
 	if got := d.SkillsPath(); got != "/some/dist/skills" {
 		t.Errorf("SkillsPath = %q", got)
 	}
-	if got := d.SkillsIndexPath(); got != "/some/dist/skills-index.json" {
+	if got := d.SkillsIndexPath(); got != "/some/dist/skills/skills-index.json" {
 		t.Errorf("SkillsIndexPath = %q", got)
 	}
 	if got := d.SkillZipPath("foo-community-1.0.0.zip"); got != "/some/dist/skills/foo-community-1.0.0.zip" {
@@ -202,6 +206,47 @@ func TestDir_SkillsPath(t *testing.T) {
 	}
 	if got := d.SkillSHA256Path("foo-community-1.0.0.zip"); got != "/some/dist/skills/foo-community-1.0.0.zip.sha256" {
 		t.Errorf("SkillSHA256Path = %q", got)
+	}
+}
+
+// TestDir_NewDirEx verifies NewDirEx places skills on a separate root
+// from the agent tarballs. This is the recommended deployment shape:
+// dist/ stays read-only (the agent package source the operator pushes),
+// while skills storage is mounted read-write so uploads can land.
+func TestDir_NewDirEx(t *testing.T) {
+	d := NewDirEx("/var/lib/agent-marketplace/dist", "/var/lib/agent-marketplace/skills")
+	if d.Path != "/var/lib/agent-marketplace/dist" {
+		t.Errorf("Path = %q", d.Path)
+	}
+	if d.SkillsRoot != "/var/lib/agent-marketplace/skills" {
+		t.Errorf("SkillsRoot = %q", d.SkillsRoot)
+	}
+	if got := d.SkillsPath(); got != "/var/lib/agent-marketplace/skills" {
+		t.Errorf("SkillsPath = %q", got)
+	}
+	if got := d.SkillsIndexPath(); got != "/var/lib/agent-marketplace/skills/skills-index.json" {
+		t.Errorf("SkillsIndexPath = %q", got)
+	}
+	if got := d.SkillZipPath("foo-community-1.0.0.zip"); got != "/var/lib/agent-marketplace/skills/foo-community-1.0.0.zip" {
+		t.Errorf("SkillZipPath = %q", got)
+	}
+	// Sanity: agent tarball path still uses Path, never SkillsRoot.
+	if got := d.TarballPath("openclaw.tar.gz"); got != "/var/lib/agent-marketplace/dist/openclaw.tar.gz" {
+		t.Errorf("TarballPath = %q", got)
+	}
+}
+
+// TestDir_NewDirEx_EmptySkillsRoot verifies the empty-string fallback.
+// Without it, callers passing through CLI flags or env vars could
+// silently produce a Dir with empty SkillsRoot, breaking every
+// skills-handler method that uses SkillsPath().
+func TestDir_NewDirEx_EmptySkillsRoot(t *testing.T) {
+	d := NewDirEx("/some/dist", "")
+	if d.SkillsRoot != "/some/dist/skills" {
+		t.Errorf("SkillsRoot = %q (want fallback /some/dist/skills)", d.SkillsRoot)
+	}
+	if got := d.SkillsPath(); got != "/some/dist/skills" {
+		t.Errorf("SkillsPath = %q", got)
 	}
 }
 
@@ -267,8 +312,13 @@ func TestDir_LoadSkillsIndex_Missing(t *testing.T) {
 // TestDir_LoadSkillsIndex_Populated round-trips a small index on disk.
 func TestDir_LoadSkillsIndex_Populated(t *testing.T) {
 	dist := t.TempDir()
+	// skills-index.json lives inside SkillsRoot (alongside the zips).
+	// NewDir's default SkillsRoot is <dist>/skills, so write there.
+	if err := os.MkdirAll(filepath.Join(dist, "skills"), 0o755); err != nil {
+		t.Fatal(err)
+	}
 	want := `{"generated_at":"2026-09-08","schema_version":"2.0","skills":[{"name":"hello","description":"hi","category":"dev","versions":[{"version":"1.0.0","source":"community","channel":"stable","agents":["all"],"install_method":"zip-extract","zip":{"filename":"hello-community-1.0.0.zip","size_bytes":3,"sha256":"sha256:abc"}}]}]}`
-	if err := os.WriteFile(filepath.Join(dist, "skills-index.json"), []byte(want), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(dist, "skills", "skills-index.json"), []byte(want), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	got, err := NewDir(dist).LoadSkillsIndex()
@@ -284,7 +334,10 @@ func TestDir_LoadSkillsIndex_Populated(t *testing.T) {
 // reload loop can log it.
 func TestDir_LoadSkillsIndex_ParseError(t *testing.T) {
 	dist := t.TempDir()
-	if err := os.WriteFile(filepath.Join(dist, "skills-index.json"), []byte("{garbage"), 0o644); err != nil {
+	if err := os.MkdirAll(filepath.Join(dist, "skills"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dist, "skills", "skills-index.json"), []byte("{garbage"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := NewDir(dist).LoadSkillsIndex(); err == nil {

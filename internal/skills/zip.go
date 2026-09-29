@@ -362,67 +362,86 @@ func Sha256Bytes(data []byte) string {
 	return hex.EncodeToString(h.Sum(nil))
 }
 
-// ParseZipFilename extracts (name, source, version) from a skill zip
-// filename. Accepts three layouts:
+// ParseZipFilename does a best-effort extraction of (name, source, version)
+// from a skill zip filename. Returns empty values (with nil error) for any
+// layout it can't recognise — callers (upload handler, CLI install) fall
+// back to SKILL.md / form fields rather than rejecting the upload. The
+// only hard error is a filename that doesn't end in `.zip`, which is a
+// clear signal the upload isn't a skill zip at all.
 //
-//   - "<name>.zip"                     → (name, "", "")
-//   - "<name>-<version>.zip"           → (name, "", version)   most common
-//   - "<name>-<source>-<version>.zip"  → (name, source, ver)   CLI build output
+// Recognised layouts (assuming the stem ends in `.zip`):
 //
-// The 3-segment form is only treated as "<name>-<source>-<version>" when
-// the middle segment is a recognised source (community / internal — see
-// IsValidSource). Otherwise it's ambiguous with the 2-segment
-// "<name-with-dash>-<version>" form (e.g. "ppt-maker-1.0.3.zip") and we
-// fall through to the 2-segment interpretation. This means community
-// uploads of a 3-segment zip where the middle word isn't a valid source
-// are recognised by name+version only — source is then supplied by the
-// upload channel via the multipart form field.
+//	"<name>.zip"                            → (name, "", "")
+//	"<name>-<version>.zip"                  → (name, "", version)   if version is semver
+//	"<name>-<source>-<version>.zip"         → (name, source, ver)   CLI build (middle is valid source)
+//	"<name-with-dash>-<version>.zip"        → (name-with-dash, "", ver)   3-segment, middle isn't a source
+//	"<name-with-dashes>-<version>.zip"      → (name-with-dashes, "", ver)   4+ segments, last is semver
+//	"<name-with-dashes>-<source>-<version>.zip" → (name-with-dashes, source, ver)   4+ segments, second-to-last is valid source
 //
-// 4+ dash-separated segments, 0 segments, or any empty name segment
-// returns an error. Version is allowed to be empty only in the 1-
-// segment layout — a 2-segment "<name>-<X>.zip" where X isn't a real
-// version is rejected so the operator can't silently hand us a
-// filename like "hello-community.zip" where "community" gets parsed
-// as the version.
-//
-// `source` is left empty in the 1-/2-segment layouts — the upload
-// handler resolves the actual source from a multipart form field
-// (see HandleSkillUpload) when the filename's source is empty or not
-// in IsValidSource. The shared (name, source, version) tuple continues
-// to be the registry identity so download / delete / sync paths don't
-// have to special-case the new layouts.
+// Filename matching is just a hint. The authoritative identity tuple
+// (name, source, version) comes from SKILL.md + multipart form fields;
+// this function never rejects on a layout mismatch — it surfaces what it
+// can infer and lets the caller fill in the rest. Community uploads of
+// zips whose names contain internal dashes (e.g. "dragon-ppt-maker-1.0.0")
+// hit the 4+ segment branch and were previously rejected outright; they
+// now fall through to a SKILL.md-driven identity.
 func ParseZipFilename(filename string) (name, source, version string, err error) {
 	if !strings.HasSuffix(filename, ".zip") {
 		return "", "", "", fmt.Errorf("filename %q does not end in .zip", filename)
 	}
 	stem := strings.TrimSuffix(filename, ".zip")
 	parts := strings.Split(stem, "-")
-	if len(parts) == 0 || len(parts) > 3 {
-		return "", "", "", fmt.Errorf("filename %q does not match <name>[-<source>]-<version>.zip (got %d dash-separated parts)", filename, len(parts))
+	if len(parts) == 0 {
+		return "", "", "", nil
 	}
 	switch len(parts) {
 	case 1:
+		// "<name>.zip" — version is unknown, defer to SKILL.md.
 		name = parts[0]
 	case 2:
-		name, version = parts[0], parts[1]
-	default: // 3
-		// Disambiguate "<name>-<source>-<version>" vs "<name-with-dash>-<version>".
-		// The CLI `build` command outputs "<name>-<source>-<version>.zip" so the
-		// middle segment is always a valid source value (community / internal).
-		// Anything else is a community zip whose author stuck a dash in the
-		// name — treat it as the 2-segment form.
-		if IsValidSource(parts[1]) {
+		// "<name>-<version>.zip" — only when the trailing segment is a
+		// valid semver. Otherwise the layout isn't recognisable; return
+		// empty values so the caller falls back to SKILL.md.
+		if strictSemverRE.MatchString(parts[1]) {
+			name, version = parts[0], parts[1]
+		}
+	case 3:
+		// "<name>-<source>-<version>.zip" when the middle segment is a
+		// valid source (CLI build output). Anything else is a community
+		// zip with a dash in the name — treat as the 2-segment layout.
+		if IsValidSource(parts[1]) && strictSemverRE.MatchString(parts[2]) {
 			name, source, version = parts[0], parts[1], parts[2]
-		} else {
+		} else if strictSemverRE.MatchString(parts[2]) {
 			name = parts[0] + "-" + parts[1]
 			version = parts[2]
 		}
-	}
-	if name == "" {
-		return "", "", "", fmt.Errorf("filename %q has empty name segment", filename)
-	}
-	if len(parts) >= 2 && version == "" {
-		return "", "", "", fmt.Errorf("filename %q has empty version segment", filename)
+	default: // 4+ segments
+		// Community zip whose name contains internal dashes (e.g.
+		// "dragon-ppt-maker-1.0.0.zip") or CLI build output where the
+		// name itself has dashes ("<name-with-dashes>-<source>-<ver>").
+		// Two sub-layouts:
+		//   a. "<name-with-dashes>-<source>-<version>" — second-to-last
+		//      segment is a valid source. Source comes from the filename
+		//      (no need to fall back to the form field).
+		//   b. "<name-with-dashes>-<version>" — last segment is a valid
+		//      semver. Source is left empty; the upload handler resolves
+		//      it from the multipart `source` form field.
+		//   c. Trailing two segments form a semver with prerelease
+		//      metadata (e.g. "1.0.0-rc.1" splits to ["1.0.0", "rc.1"]).
+		last := len(parts) - 1
+		switch {
+		case IsValidSource(parts[last-1]) && strictSemverRE.MatchString(parts[last]):
+			name = strings.Join(parts[:last-1], "-")
+			source = parts[last-1]
+			version = parts[last]
+		case strictSemverRE.MatchString(parts[last]):
+			name = strings.Join(parts[:last], "-")
+			version = parts[last]
+		case strictSemverRE.MatchString(parts[last-1] + "-" + parts[last]):
+			name = strings.Join(parts[:last-1], "-")
+			version = parts[last-1] + "-" + parts[last]
+		}
+		// Anything else: leave values empty, caller falls back.
 	}
 	return name, source, version, nil
 }

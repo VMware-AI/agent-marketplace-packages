@@ -12,6 +12,7 @@ Type=simple
 #   /etc/agent-marketplace/config.yaml        # YAML config (chmod 0644)
 #   /etc/agent-marketplace/env                # EnvironmentFile (chmod 0600)
 #   /var/lib/agent-marketplace/dist           # bind-mounted dist/ (read-only)
+#   /var/lib/agent-marketplace/skills         # skills storage (writable)
 ExecStart=/usr/local/bin/marketplace-api --config /etc/agent-marketplace/config.yaml
 EnvironmentFile=/etc/agent-marketplace/env
 # Reload dist/ without restarting the process. The server reloads on
@@ -26,7 +27,7 @@ NoNewPrivileges=true
 PrivateTmp=true
 ProtectSystem=strict
 ProtectHome=true
-ReadWritePaths=/var/log/agent-marketplace
+ReadWritePaths=/var/log/agent-marketplace /var/lib/agent-marketplace/skills
 # Logs go to stdout/stderr by default → journald picks them up.
 # If logging.file is set in config.yaml, also append there.
 StandardOutput=journal

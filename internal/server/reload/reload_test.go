@@ -272,7 +272,9 @@ func TestMaybeReload_SkillsOnlyChange(t *testing.T) {
 	// is zero).
 	fp := InitialFingerprints(dist)
 	skillsJSON := `{"generated_at":"2026-09-08","schema_version":"1.0","skills":[{"name":"hello","description":"hi","versions":[{"version":"1.0.0","source":"community","channel":"stable","zip":{"filename":"hello-community-1.0.0.zip","size_bytes":7,"sha256":"sha256:` + zipHex + `"}}]}]}`
-	if err := os.WriteFile(filepath.Join(distDir, "skills-index.json"), []byte(skillsJSON), 0o644); err != nil {
+	// skills-index.json lives inside SkillsRoot (alongside the zips).
+	// NewDir's default SkillsRoot is <dist>/skills, so write there.
+	if err := os.WriteFile(filepath.Join(distDir, "skills", "skills-index.json"), []byte(skillsJSON), 0o644); err != nil {
 		t.Fatal(err)
 	}
 
@@ -306,7 +308,12 @@ func TestMaybeReload_SkillsMissingFile(t *testing.T) {
 	// Drop garbage into skills-index.json. Agents index must still be
 	// served correctly (skills index stays at zero — no successful
 	// load yet).
-	if err := os.WriteFile(filepath.Join(distDir, "skills-index.json"), []byte("{garbage"), 0o644); err != nil {
+	// skills-index.json lives inside SkillsRoot (alongside the zips).
+	// NewDir's default SkillsRoot is <dist>/skills, so write there.
+	if err := os.MkdirAll(filepath.Join(distDir, "skills"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(distDir, "skills", "skills-index.json"), []byte("{garbage"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	fp := InitialFingerprints(dist)

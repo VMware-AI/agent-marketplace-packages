@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -373,8 +374,12 @@ func HandleSkillUpload(s *State) http.HandlerFunc {
 		zipName := filepath.Base(header.Filename)
 		name, fileSource, fileVer, err := skills.ParseZipFilename(zipName)
 		if err != nil {
+			// The only remaining error path is "doesn't end in .zip" —
+			// layout mismatches now return empty values and are
+			// resolved from SKILL.md below. A non-zip upload is still
+			// a hard 400 since it's clearly not a skill zip.
 			writeError(w, http.StatusBadRequest, "bad_filename",
-				"uploaded zip filename is not <name>[-<source>]-<version>.zip: "+err.Error())
+				"uploaded file is not a .zip: "+err.Error())
 			return
 		}
 		// Channel is provided as a query parameter (?channel=stable|...).
@@ -460,29 +465,46 @@ func HandleSkillUpload(s *State) http.HandlerFunc {
 				"SKILL.md validation: "+err.Error())
 			return
 		}
-		// Resolve `version`: from the filename when present; otherwise
-		// SKILL.md is the authoritative source (the operator may have
-		// shipped a zip named just "<name>.zip" with version only in the
-		// manifest).
+		// Resolve `version`: SKILL.md (the manifest) is the authoritative
+		// source of truth. A 3-segment zip filename's version segment is
+		// only a hint — if it agrees with SKILL.md we use it as-is; if it
+		// disagrees (e.g. the operator renamed an old zip after editing
+		// SKILL.md) we defer to SKILL.md and emit a warning so the
+		// divergence shows up in the operator's logs. A 1-segment filename
+		// ("<name>.zip") never carried a version, so it also defers to
+		// SKILL.md.
 		version := fileVer
 		if version == "" {
 			version = mfst.Version
+		} else if mfst.Version != fileVer {
+			slog.Warn("skill upload: zip filename version disagrees with SKILL.md; using SKILL.md",
+				"name", name,
+				"source", source,
+				"channel", channel,
+				"filename_version", fileVer,
+				"skill_md_version", mfst.Version,
+			)
+			version = mfst.Version
 		}
-		// Name in zip must match SKILL.md. The zip filename's name segment
-		// is always present (ParseZipFilename rejects empty names), so a
-		// mismatch here means the operator uploaded the wrong zip.
-		if mfst.Name != name {
-			writeError(w, http.StatusBadRequest, "name_mismatch",
-				fmt.Sprintf("zip filename says name=%q but SKILL.md says name=%q", name, mfst.Name))
-			return
-		}
-		// Version mismatch only checked when the filename carried a
-		// version segment — a 1-segment filename ("<name>.zip") defers
-		// to SKILL.md for the version.
-		if fileVer != "" && mfst.Version != fileVer {
-			writeError(w, http.StatusBadRequest, "version_mismatch",
-				fmt.Sprintf("zip filename says version=%q but SKILL.md says version=%q", fileVer, mfst.Version))
-			return
+		// Resolve `name`: SKILL.md is the authoritative source of truth.
+		// The zip filename's name segment is only a hint (hand-renamed
+		// zips happen often in community publishing). If the filename
+		// didn't yield a name (ParseZipFilename returned empty — e.g. a
+		// community zip with internal dashes that didn't match any
+		// recognised layout) we silently defer to SKILL.md; if it
+		// disagrees with SKILL.md we log a warning so the divergence
+		// shows up in the operator's logs. mfst.Name is guaranteed
+		// non-empty by mfst.Validate() above.
+		if name == "" {
+			name = mfst.Name
+		} else if mfst.Name != name {
+			slog.Warn("skill upload: zip filename name disagrees with SKILL.md; using SKILL.md",
+				"source", source,
+				"channel", channel,
+				"filename_name", name,
+				"skill_md_name", mfst.Name,
+			)
+			name = mfst.Name
 		}
 		// Canonical on-disk filename. zipName (the operator-provided
 		// name) and finalZipName can differ when the operator uploaded
