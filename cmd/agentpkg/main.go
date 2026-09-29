@@ -7,6 +7,7 @@
 package main
 
 import (
+	"errors"
 	"fmt"
 	"os"
 
@@ -40,7 +41,15 @@ func main() {
 	root.AddCommand(newSkillsCmd())
 
 	if err := root.Execute(); err != nil {
-		fmt.Fprintln(os.Stderr, err)
+		fmt.Fprintln(os.Stderr, cli.FormatExitError(err))
+		// Honor typed exit codes (rollback 74/75/76, install --dry-run 64, etc.).
+		// Without this, every error collapses to 1 and orchestrators can't
+		// distinguish "no rollback target" (74, recoverable / no-op) from
+		// "real failure" (1, alert).
+		var ec cli.ExitCoder
+		if errors.As(err, &ec) {
+			os.Exit(ec.ExitCode())
+		}
 		os.Exit(1)
 	}
 }

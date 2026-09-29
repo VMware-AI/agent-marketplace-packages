@@ -31,13 +31,24 @@ func NewShowCmd(cfgPath, credsPath *string) *cobra.Command {
 			if err := client.do(path, &agent); err != nil {
 				return err
 			}
-			// Optional version filter
-			if version != "" {
+			// Filter versions. --channel and --version are independent:
+			//   - --channel alone → keep only versions matching channel
+			//   - --version alone → keep only versions matching version
+			//   - both             → keep only versions matching both
+			//
+			// F010 (tested 2026-09-30): the old code wrapped the channel
+			// check inside `if version != ""`, so `show --channel beta`
+			// returned ALL stable versions and silently misled callers.
+			if channel != "" || version != "" {
 				filtered := agent.Versions[:0:0]
 				for _, v := range agent.Versions {
-					if v.Version == version && (channel == "" || v.Channel == channel) {
-						filtered = append(filtered, v)
+					if version != "" && v.Version != version {
+						continue
 					}
+					if channel != "" && v.Channel != channel {
+						continue
+					}
+					filtered = append(filtered, v)
 				}
 				agent.Versions = filtered
 			}
