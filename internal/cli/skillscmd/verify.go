@@ -1,10 +1,13 @@
 package skillscmd
 
 import (
+	"archive/zip"
+	"bytes"
 	"fmt"
 	"io"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/VMware-AI/agent-marketplace-packages/internal/skills"
 	"github.com/spf13/cobra"
@@ -25,7 +28,10 @@ success, non-zero on validation errors.
 
 Unlike ` + "`agentpkg package verify`" + ` (which also recomputes payload checksums
 against manifest.json), skills verify does NOT have any "payload" to
-verify — the SKILL.md is the only required file inside the zip.`,
+verify — the SKILL.md is the only required file inside the zip.
+
+<path> may be a directory containing SKILL.md, a SKILL.md file, or a
+.zip archive with SKILL.md at its root.`,
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return verifySkill(args[0], cmd.OutOrStdout())
@@ -42,12 +48,29 @@ func verifySkill(path string, out io.Writer) error {
 	if err != nil {
 		return fmt.Errorf("stat %s: %w", path, err)
 	}
-	skillMD := path
-	if fi.IsDir() {
+	var skillMD string
+	switch {
+	case fi.IsDir():
 		skillMD = filepath.Join(path, "SKILL.md")
 		if _, err := os.Stat(skillMD); err != nil {
 			return fmt.Errorf("no SKILL.md found at %s", skillMD)
 		}
+	case strings.EqualFold(filepath.Ext(path), ".zip"):
+		// F023 (tested 2026-09-30): zip-path used to be passed straight to
+		// skills.LoadSkillFile, which read the zip header bytes as markdown
+		// and emitted "must start with ---" regardless of zip contents.
+		// Extract SKILL.md from the zip to a tmpfile (preserves ZipFile
+		// semantics; symlinks/permissions inside the zip don't matter for
+		// frontmatter validation).
+		extracted, err := extractSkillMDFromZip(path)
+		if err != nil {
+			fmt.Fprintf(out, "  SKILL.md:  FAIL  %v\n", err)
+			return err
+		}
+		defer os.Remove(extracted)
+		skillMD = extracted
+	default:
+		skillMD = path
 	}
 	fmt.Fprintf(out, "Verifying %s ...\n", skillMD)
 	m, err := skills.LoadSkillFile(skillMD)
@@ -83,4 +106,50 @@ func verifySkill(path string, out io.Writer) error {
 	}
 	fmt.Fprintln(out, "  SKILL.md:  ok")
 	return nil
+}
+
+// extractSkillMDFromZip reads SKILL.md from a .zip archive to a tmpfile.
+// Looks at the root of the zip first; if the author packaged it under
+// a top-level prefix (e.g. "my-skill/SKILL.md"), uses the first match.
+// Returns the tmpfile path; caller must os.Remove it.
+func extractSkillMDFromZip(zipPath string) (string, error) {
+	r, err := zip.OpenReader(zipPath)
+	if err != nil {
+		return "", fmt.Errorf("open zip: %w", err)
+	}
+	defer r.Close()
+
+	var skillMD *zip.File
+	for _, f := range r.File {
+		if f.Name == "SKILL.md" || strings.HasSuffix(f.Name, "/SKILL.md") {
+			skillMD = f
+			break
+		}
+	}
+	if skillMD == nil {
+		return "", fmt.Errorf("no SKILL.md in zip %s", zipPath)
+	}
+	fh, err := skillMD.Open()
+	if err != nil {
+		return "", fmt.Errorf("open %s in zip: %w", skillMD.Name, err)
+	}
+	defer fh.Close()
+	data, err := io.ReadAll(fh)
+	if err != nil {
+		return "", fmt.Errorf("read %s in zip: %w", skillMD.Name, err)
+	}
+	tmp, err := os.CreateTemp("", "agentpkg-skill-md-*.md")
+	if err != nil {
+		return "", fmt.Errorf("create tmp for SKILL.md: %w", err)
+	}
+	if _, err := io.Copy(tmp, bytes.NewReader(data)); err != nil {
+		tmp.Close()
+		os.Remove(tmp.Name())
+		return "", fmt.Errorf("write tmp SKILL.md: %w", err)
+	}
+	if err := tmp.Close(); err != nil {
+		os.Remove(tmp.Name())
+		return "", fmt.Errorf("close tmp SKILL.md: %w", err)
+	}
+	return tmp.Name(), nil
 }
