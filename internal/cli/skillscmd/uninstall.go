@@ -175,6 +175,26 @@ func runUninstall(cmd *cobra.Command, p uninstallParams) error {
 	// single-root, depending on the install mode), then remove state.json
 	// + the now-empty central stash dir (per-agent mode).
 	dirs := payloadDirs(payloadRoot, st, p.Name)
+	if p.KeepState {
+		// F021 (tested 2026-09-30): --keep-state used to be a no-op in
+		// legacy single-root mode because state.json sits at
+		// <target-dir>/<name>/state.json — INSIDE the payloadRoot — and
+		// the RemoveAll below wiped both the version dirs AND state.json.
+		// Save state.json first (if it exists), wipe the dirs, then
+		// restore it so callers see the documented "leave state.json
+		// intact" behavior. We only do this in single-root mode; in
+		// per-agent mode state.json lives at <stateDir>/<name>/state.json
+		// which is NOT under payloadRoot, so the existing --keep-state
+		// branch already worked correctly.
+		if payloadRoot != "" {
+			statePath := filepath.Join(payloadRoot, p.Name, "state.json")
+			if data, err := os.ReadFile(statePath); err == nil {
+				// Track which payloads we wiped so we can restore the
+				// skill dir structure around the preserved state.json.
+				savedState = data
+			}
+		}
+	}
 	for _, d := range dirs {
 		if err := os.RemoveAll(d); err != nil {
 			return fmt.Errorf("remove %s: %w", d, err)
@@ -186,10 +206,32 @@ func runUninstall(cmd *cobra.Command, p uninstallParams) error {
 		// was already removed by payloadDirs above, so the call is a
 		// no-op there.
 		_ = os.RemoveAll(filepath.Join(p.StateDir, p.Name))
+	} else if savedState != nil && payloadRoot != "" {
+		// Restore state.json at <target-dir>/<name>/state.json.
+		// Recreate the parent dir first since RemoveAll just wiped it.
+		dir := filepath.Join(payloadRoot, p.Name)
+		if err := os.MkdirAll(dir, 0755); err != nil {
+			return fmt.Errorf("restore state.json dir: %w", err)
+		}
+		if err := os.WriteFile(filepath.Join(dir, "state.json"), savedState, 0644); err != nil {
+			return fmt.Errorf("restore state.json: %w", err)
+		}
+		// Note: the `latest` symlink is intentionally NOT restored — the
+		// version dirs it pointed at are gone. Without versions on disk,
+		// re-pointing `latest` would just be a dangling symlink. Callers
+		// who want a "fully intact" uninstall should not pass --keep-state.
+		fmt.Fprintf(out, "Uninstalled %s (all versions; state.json preserved)\n", p.Name)
+		return nil
 	}
 	fmt.Fprintf(out, "Uninstalled %s (all versions)\n", p.Name)
 	return nil
 }
+
+// savedState is a package-local scratch buffer used by runUninstall when
+// --keep-state is set in single-root mode (see F021). It carries state.json
+// across the RemoveAll(payloadRoot/name) call so we can write it back
+// afterwards. nil in all other modes.
+var savedState []byte
 
 // payloadDirs returns the list of distinct on-disk dirs to wipe for
 // "uninstall all versions". In legacy single-root mode (payloadRoot set),

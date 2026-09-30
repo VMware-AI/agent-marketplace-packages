@@ -48,9 +48,22 @@ func NewInstallCmd(cfgPath, credsPath *string) *cobra.Command {
 (agent, source, channel, version), verifies sha256, extracts to a temp
 directory, then runs install.sh with AGENT_MARKETPLACE_TARGET_ROOT set.
 
-If --version is omitted, the latest stable version of the agent is picked.`,
+If --version is omitted, the latest stable version of the agent is picked.
+
+NOTE: --dry-run is NOT supported on install. It only applies to upgrade
+(see 'agentpkg upgrade --dry-run'). Passing --dry-run here is rejected
+with exit 64 to surface the mistake — install is not a reversible op,
+so silently running the real install under a misleading flag is unsafe.`,
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
+			// F011 (tested 2026-09-30): install --dry-run used to be silently
+			// ignored by runInstall's `if isUpgrade && s.dryRun` guard, so an
+			// operator expecting a no-op preview got a full real install
+			// (state.json written, systemd units started). Reject early so
+			// the failure mode is loud.
+			if s.dryRun {
+				return ExitErrorf(ExitUsageError, "--dry-run is only supported on 'upgrade'; 'install' always runs the real install")
+			}
 			name := args[0]
 			client, err := NewClient(*cfgPath, *credsPath)
 			if err != nil {
