@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 
+	"github.com/VMware-AI/agent-marketplace-packages/internal/manifest"
 	"github.com/spf13/cobra"
 )
 
@@ -25,8 +26,8 @@ func NewBuildCmd() *cobra.Command {
 		dryRun  bool
 	)
 	c := &cobra.Command{
-		Use:   "build <path> --version X.Y.Z [--source upstream] [--channel stable] [--out dist]",
-		Short: "Package one version of an agent into dist/<...>.tar.gz + .sha256 and refresh index.json",
+		Use:   "build <path> --version X.Y.Z [--source upstream] [--channel stable] [--out <path>/dist]",
+		Short: "Package one version of an agent into <outDir>/<name>-<source>-<version>.tar.gz + .sha256 and refresh index.json",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if version == "" {
@@ -38,17 +39,19 @@ func NewBuildCmd() *cobra.Command {
 			if channel == "" {
 				channel = "stable"
 			}
-			if outDir == "" {
-				outDir = "dist"
-			}
-			agentDir := args[0]
-			return buildOne(agentDir, source, channel, version, outDir, dryRun)
+			// F022 / F025: buildOne resolves the empty --out
+			// default to <agent-dir>/dist and reads the tarball
+			// name from manifest.agent (not filepath.Base(dir)).
+			// We just pass the args through; see buildOne's
+			// comments for the rationale.
+			return buildOne(args[0], source, channel, version, outDir, dryRun)
 		},
 	}
 	c.Flags().StringVar(&version, "version", "", "semver version segment (required)")
 	c.Flags().StringVar(&source, "source", "upstream", "source tree (upstream | ours)")
 	c.Flags().StringVar(&channel, "channel", "stable", "channel (stable | beta | dev | internal)")
-	c.Flags().StringVar(&outDir, "out", "dist", "output directory")
+	// Empty default → resolve to <agent-dir>/dist in RunE. See F022.
+	c.Flags().StringVar(&outDir, "out", "", "output directory (default: <agent-dir>/dist; explicit value is CWD-relative)")
 	c.Flags().BoolVar(&dryRun, "dry-run", false, "build the tarball in a temp dir but don't write dist/")
 	return c
 }
@@ -78,12 +81,42 @@ func NewReindexCmd() *cobra.Command {
 // buildOne packages agents/<name>/<source>/<version>/ into
 // dist/<name>-<source>-<version>.tar.gz.
 func buildOne(agentDir, source, channel, version, outDir string, dryRun bool) error {
-	name := filepath.Base(agentDir)
 	payloadDir := filepath.Join(agentDir, source, version)
 	mf := filepath.Join(payloadDir, "manifest.json")
 	if _, err := os.Stat(mf); err != nil {
 		return fmt.Errorf("missing manifest.json at %s", mf)
 	}
+
+	// F022 (tested 2026-09-30): resolve an empty outDir to
+	// ``<agentDir>/dist`` so the build lands next to the source
+	// directory regardless of CWD. The cobra command's RunE passes
+	// through the empty default; the resolution happens here so
+	// callers (and tests) that bypass the CLI get consistent
+	// behavior. The CLI's --out flag is also "" by default for the
+	// same reason — see NewBuildCmd's flag binding.
+	if outDir == "" {
+		outDir = filepath.Join(agentDir, "dist")
+	}
+
+	// F025 (tested 2026-09-30): the previous code derived the
+	// tarball name from ``filepath.Base(agentDir)`` — so
+	// ``package build /tmp/pkg-init`` (where agentDir was scaffolded
+	// with ``package init my-test-agent --dir /tmp/pkg-init``) wrote
+	// ``pkg-init-upstream-0.1.0.tar.gz`` even though the agent's
+	// canonical identity (per ``manifest.json``) is ``my-test-agent``.
+	// The dist/index.json entry used the manifest's agent field but
+	// the on-disk filename did not, so ``download <tarball>`` lookups
+	// by name failed. We now read the agent identity from
+	// ``manifest.agent`` so the filename matches the index entry and
+	// the rest of the registry.
+	m, err := manifest.Load(mf)
+	if err != nil {
+		return fmt.Errorf("load %s: %w", mf, err)
+	}
+	if m.Agent == "" {
+		return fmt.Errorf("%s has empty agent field — cannot derive tarball name", mf)
+	}
+	name := m.Agent
 
 	// Step 1: verify first (fast fail).
 	if err := verifyAgent(agentDir, true); err != nil {

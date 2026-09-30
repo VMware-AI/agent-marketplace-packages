@@ -37,8 +37,8 @@ func NewSkillsBuildCmd() *cobra.Command {
 		dryRun  bool
 	)
 	c := &cobra.Command{
-		Use:   "build <dir> --version X.Y.Z [--source community] [--channel stable] [--out dist]",
-		Short: "Package one version of a skill into dist/skills/<name>-<source>-<version>.zip + .sha256 and refresh skills-index.json",
+		Use:   "build <dir> --version X.Y.Z [--source community] [--channel stable] [--out <dir>/dist]",
+		Short: "Package one version of a skill into <outDir>/skills/<name>-<source>-<version>.zip + .sha256 and refresh skills-index.json",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if version == "" {
@@ -53,16 +53,18 @@ func NewSkillsBuildCmd() *cobra.Command {
 			if channel == "" {
 				channel = "stable"
 			}
-			if outDir == "" {
-				outDir = "dist"
-			}
+			// F022 default-resolution moved into buildSkill so the
+			// function (and tests that call it directly) get the
+			// same <dir>/dist fallback as the CLI. See buildSkill's
+			// comments for the rationale.
 			return buildSkill(args[0], source, channel, version, outDir, dryRun, cmd.OutOrStdout())
 		},
 	}
 	c.Flags().StringVar(&version, "version", "", "strict semver version segment (required, e.g. 1.0.0)")
 	c.Flags().StringVar(&source, "source", "community", "source tree (community | internal)")
 	c.Flags().StringVar(&channel, "channel", "stable", "channel (stable | beta | edge | internal)")
-	c.Flags().StringVar(&outDir, "out", "dist", "output directory (dist/skills/ is created under it)")
+	// Empty default → resolve to <skill-dir>/dist in RunE. See F022.
+	c.Flags().StringVar(&outDir, "out", "", "output directory (default: <skill-dir>/dist; explicit value is CWD-relative)")
 	c.Flags().BoolVar(&dryRun, "dry-run", false, "build the zip in a temp dir but don't write to dist/")
 	return c
 }
@@ -73,6 +75,19 @@ func NewSkillsBuildCmd() *cobra.Command {
 func buildSkill(dir, source, channel, version, outDir string, dryRun bool, out io.Writer) error {
 	if !strictSemverCLIRe.MatchString(version) {
 		return fmt.Errorf("--version %q is not strict semver (want MAJOR.MINOR.PATCH[-prerelease])", version)
+	}
+	// F022 (tested 2026-09-30): the previous --out default was the
+	// string literal "dist", which filepath.Join'd with the process
+	// CWD — so `agentpkg skills build /tmp/my-skill` from $HOME wrote
+	// to $HOME/dist/skills/. Operators running the build from inside
+	// the skill dir got the expected layout; anyone else got a
+	// surprise directory at CWD that they had to clean up. Resolve
+	// the empty default to <skill-dir>/dist so the output lands next
+	// to SKILL.md regardless of where the build was invoked.
+	// Explicit --out still wins — that path is CWD-relative (matches
+	// `package build` for consistency).
+	if outDir == "" {
+		outDir = filepath.Join(dir, "dist")
 	}
 	skillMDPath := filepath.Join(dir, "SKILL.md")
 	m, err := skills.LoadSkillFile(skillMDPath)
