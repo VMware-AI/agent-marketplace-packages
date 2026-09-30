@@ -305,6 +305,68 @@ func TestSkillsBuild_ReindexAfterBuild(t *testing.T) {
 	}
 }
 
+// TestSkillsBuild_DefaultOutLandsNextToSkill is the regression for F022:
+//
+// the previous --out default was the string literal "dist", which
+// filepath.Join'd with the process CWD. So `agentpkg skills build
+// /tmp/my-skill` from $HOME wrote to $HOME/dist/skills/. Operators
+// running the build from inside the skill dir got the expected layout;
+// anyone else got a surprise directory at CWD that they had to clean up.
+//
+// The fix resolves the empty default to <skill-dir>/dist so the output
+// lands next to SKILL.md regardless of where the build was invoked.
+// This test invokes the build from a *different* TempDir (simulating
+// "CWD != skill-dir") and asserts the zip lands in the skill-dir sibling.
+func TestSkillsBuild_DefaultOutLandsNextToSkill(t *testing.T) {
+	skillDir := writeValidSkillDir(t)
+	// Pretend the operator is in a different directory when they
+	// invoke the build (e.g. they're at the repo root building several
+	// skills in sequence). This is the case where the old "dist" CWD
+	// default produced output at CWD instead of next to the skill.
+	otherCwd := t.TempDir()
+	origCwd, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chdir(otherCwd); err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = os.Chdir(origCwd) }()
+
+	cmd := NewSkillsBuildCmd()
+	if _, err := runCmd(t, cmd, skillDir, "--version", "1.0.0"); err != nil {
+		t.Fatalf("build (default out): %v", err)
+	}
+
+	// The zip must be at <skillDir>/dist/skills/hello-community-1.0.0.zip
+	// (sibling to SKILL.md), NOT at <otherCwd>/dist/skills/... .
+	wantZip := filepath.Join(skillDir, "dist", "skills", "hello-community-1.0.0.zip")
+	if _, err := os.Stat(wantZip); err != nil {
+		t.Errorf("zip not at expected default location %s: %v", wantZip, err)
+	}
+	wrongZip := filepath.Join(otherCwd, "dist", "skills", "hello-community-1.0.0.zip")
+	if _, err := os.Stat(wrongZip); err == nil {
+		t.Errorf("zip incorrectly landed at CWD-relative path %s", wrongZip)
+	}
+}
+
+// TestSkillsBuild_ExplicitOutHonored confirms that the F022 fix
+// doesn't break operators who DO want CWD-relative output. Explicit
+// --out must still be honored verbatim — only the *default* (empty)
+// value gets resolved relative to the skill dir.
+func TestSkillsBuild_ExplicitOutHonored(t *testing.T) {
+	skillDir := writeValidSkillDir(t)
+	outDir := t.TempDir()
+	cmd := NewSkillsBuildCmd()
+	if _, err := runCmd(t, cmd, skillDir, "--version", "1.0.0", "--out", outDir); err != nil {
+		t.Fatalf("build: %v", err)
+	}
+	wantZip := filepath.Join(outDir, "skills", "hello-community-1.0.0.zip")
+	if _, err := os.Stat(wantZip); err != nil {
+		t.Errorf("explicit --out not honored: zip missing at %s: %v", wantZip, err)
+	}
+}
+
 // -----------------------------------------------------------------------
 // sign (dry-run only — actual gpg would need a key)
 // -----------------------------------------------------------------------
