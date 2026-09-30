@@ -151,6 +151,141 @@ func TestReadPassword_RejectsEmpty(t *testing.T) {
 	}
 }
 
+// TestReadPassword_TrimsAllWhitespace is the F003 regression:
+//
+// the previous version stripped only '\n' / '\r' from the password.
+// Operators who copy-paste (or pipe through `echo`) the password with a
+// stray tab / space at the end got a wrong-but-non-empty password
+// written to disk — only surfacing as a 401 on the next agentpkg
+// command. The fix trims the full whitespace set ("\r\n\t ") for both
+// --password-stdin and --password-file.
+func TestReadPassword_TrimsAllWhitespace(t *testing.T) {
+	cases := []struct {
+		name, raw, want string
+	}{
+		{"trailing_tab", "secret\t", "secret"},
+		{"trailing_spaces", "secret   ", "secret"},
+		{"trailing_mixed", "secret\r\n\t ", "secret"},
+		{"no_trailing", "secret", "secret"},
+		{"leading_kept", "  secret", "  secret"}, // leading whitespace is NOT trimmed
+		{"internal_kept", "se cret", "se cret"},  // internal whitespace is NOT touched
+	}
+	for _, tc := range cases {
+		t.Run("file_"+tc.name, func(t *testing.T) {
+			dir := t.TempDir()
+			p := filepath.Join(dir, "pw")
+			if err := os.WriteFile(p, []byte(tc.raw), 0600); err != nil {
+				t.Fatal(err)
+			}
+			got, err := readPassword("", false, p)
+			if err != nil {
+				t.Fatalf("readPassword: %v", err)
+			}
+			if got != tc.want {
+				t.Errorf("got %q, want %q", got, tc.want)
+			}
+		})
+		t.Run("stdin_"+tc.name, func(t *testing.T) {
+			// stdin's readPassword path is exercised via a pipe. We
+			// close stdin with the bytes to read; readAll consumes
+			// them. (Tests can't share os.Stdin globally — each run
+			// is fine, but the test can't run in parallel with other
+			// stdin tests.)
+			r, w, err := os.Pipe()
+			if err != nil {
+				t.Fatal(err)
+			}
+			origStdin := os.Stdin
+			os.Stdin = r
+			defer func() { os.Stdin = origStdin }()
+			if _, err := w.Write([]byte(tc.raw)); err != nil {
+				t.Fatal(err)
+			}
+			w.Close()
+			got, err := readPassword("", true, "")
+			if err != nil {
+				t.Fatalf("readPassword: %v", err)
+			}
+			if got != tc.want {
+				t.Errorf("got %q, want %q", got, tc.want)
+			}
+		})
+	}
+}
+
+// TestReadPassword_RejectsLooseFilePerms is the F008 regression:
+//
+// --password-file used to accept any file mode, including 0664 / 0644 /
+// world-readable, even though the help text said "chmod 0600". An
+// operator who skipped the chmod wrote a world-readable password into
+// ~/.config/agentpkg/credentials. The fix refuses anything looser than
+// 0600 (group/other bits must both be zero) up front, before any bytes
+// are read.
+func TestReadPassword_RejectsLooseFilePerms(t *testing.T) {
+	cases := []struct {
+		name    string
+		mode    os.FileMode
+		wantErr bool
+	}{
+		{"owner_only_rw_0600", 0600, false},
+		{"owner_only_r_0400", 0400, false},
+		{"group_readable_0640", 0640, true},
+		{"world_readable_0644", 0644, true},
+		{"group_writable_0660", 0660, true},
+		{"world_writable_0666", 0666, true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := t.TempDir()
+			p := filepath.Join(dir, "pw")
+			if err := os.WriteFile(p, []byte("secret\n"), tc.mode); err != nil {
+				t.Fatal(err)
+			}
+			// os.WriteFile respects the umask; explicit chmod
+			// afterwards so test mode matches tc.mode exactly even
+			// when the runner's umask is wide.
+			if err := os.Chmod(p, tc.mode); err != nil {
+				t.Fatal(err)
+			}
+			_, err := readPassword("", false, p)
+			if tc.wantErr {
+				if err == nil {
+					t.Errorf("expected error for mode %#o, got nil", tc.mode)
+				} else if !strings.Contains(err.Error(), "must be 0600 or 0400") {
+					t.Errorf("error message should mention 'must be 0600 or 0400', got: %v", err)
+				}
+			} else if err != nil {
+				t.Errorf("unexpected error for mode %#o: %v", tc.mode, err)
+			}
+		})
+	}
+}
+
+// TestIsHTTPS exercises the scheme check that gates the F006 fix.
+// We don't hit the network; we just want the function to agree with
+// the obvious URL-string parsing.
+func TestIsHTTPS(t *testing.T) {
+	cases := []struct {
+		raw  string
+		want bool
+	}{
+		{"https://marketplace.example.com", true},
+		{"HTTPS://marketplace.example.com", true}, // scheme is case-insensitive
+		{"http://localhost:8080", false},
+		{"HTTP://localhost", false},
+		{"ftp://nope", false},
+		{"", false},
+		{"not a url", false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.raw, func(t *testing.T) {
+			if got := isHTTPS(tc.raw); got != tc.want {
+				t.Errorf("isHTTPS(%q) = %v, want %v", tc.raw, got, tc.want)
+			}
+		})
+	}
+}
+
 // TestReadPassword_PasswordBeatsStdin covers the documented priority order
 // when multiple sources are passed in by mistake: --password wins so the
 // caller gets a deterministic result (the cobra-level RunE rejects the

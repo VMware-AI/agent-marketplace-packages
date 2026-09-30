@@ -49,14 +49,23 @@ func NewConfigGenerateCmd(cfgPath, credsPath *string) *cobra.Command {
 does), extracts the embedded render-config.sh, and invokes it with
 $AGENT_MARKETPLACE_CONFIG_INPUT pointing at the daemon-supplied config
 input file. The render script writes the agent's config file(s) to the
-upstream-canonical locations declared in manifest.configs[].
+upstream-canonical locations declared in manifest.configs[].render_to
+(typically under ~/.config/ — e.g. ~/.config/opencode/opencode.json).
+agentpkg does not choose the path itself.
 
 Exit codes:
   0 — success
   1 — invalid arguments / config input not found
   70 — render-config.sh reported a configuration error (missing required key)
   71 — render-config.sh reported a script error
-  72 — soft failure (reserved, currently unused here)`,
+  72 — soft failure (reserved, currently unused here)
+
+--target-root affects only AGENT_MARKETPLACE_DEPLOY_ROOT (where the
+agent's binary lands under install). It does NOT control where the
+config file lands — that's decided by the manifest's render_to paths
+and the render-config.sh script. The env var
+AGENT_MARKETPLACE_TARGET_ROOT is also passed so a render-config.sh
+that wants to honor it can read it; current render scripts ignore it.`,
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			name := args[0]
@@ -76,7 +85,7 @@ Exit codes:
 	c.Flags().StringVar(&source, "source", "upstream", "source tree (upstream | ours)")
 	c.Flags().StringVar(&channel, "channel", "stable", "channel (stable | beta | dev)")
 	c.Flags().StringVar(&version, "version", "", "specific version (default: latest stable)")
-	c.Flags().StringVar(&targetRoot, "target-root", "", "target install root (default: $HOME/.local)")
+	c.Flags().StringVar(&targetRoot, "target-root", "", "affects AGENT_MARKETPLACE_DEPLOY_ROOT only; config file location is determined by manifest.configs[].render_to (default: $HOME/.local)")
 	c.Flags().StringVar(&cacheDir, "cache-dir", "", "tarball cache directory")
 	c.Flags().StringVar(&inputPath, "config-input", "", "path to daemon-supplied config input JSON file (required)")
 	return c
@@ -158,6 +167,7 @@ func runConfigGenerate(c *Client, name, source, channel, version, targetRoot, ca
 
 	// Compute deploy_root for the env var (informational).
 	deployRoot := filepath.Join(resolveTargetRoot(targetRoot), name, version)
+	targetRootAbs := resolveTargetRoot(targetRoot)
 
 	// Invoke render-config.sh with the agent-marketplace env vars.
 	cmd := exec.Command(renderScriptPath.Name())
@@ -167,6 +177,14 @@ func runConfigGenerate(c *Client, name, source, channel, version, targetRoot, ca
 		"AGENT_MARKETPLACE_AGENT="+name,
 		"AGENT_MARKETPLACE_VERSION="+version,
 		"AGENT_MARKETPLACE_DEPLOY_ROOT="+deployRoot,
+		// F020 (tested 2026-09-30): also pass TARGET_ROOT so a
+		// render-config.sh that wants to honor it (e.g. for
+		// tests or sandboxed deployments) can. Current render
+		// scripts ignore it and write to the canonical paths
+		// declared in manifest.configs[].render_to. --target-root
+		// therefore does NOT change where the config file lands;
+		// it only controls DEPLOY_ROOT.
+		"AGENT_MARKETPLACE_TARGET_ROOT="+targetRootAbs,
 	)
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
