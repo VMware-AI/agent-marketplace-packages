@@ -144,6 +144,10 @@ esac
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 HOST_DIST_DIR="${REPO_ROOT}/dist"
+# Skills storage. Distinct from dist/ (which is read-only — the agent
+# package source); this is the writable upload target for
+# `agentpkg skills upload`. Created lazily below if missing.
+HOST_SKILLS_DIR="${HOST_SKILLS_DIR:-${REPO_ROOT}/skills-data}"
 
 # ---------- preflight: docker ----------
 if ! command -v docker >/dev/null 2>&1; then
@@ -284,6 +288,16 @@ if [[ ! -f "${HOST_DIST_DIR}/index.json" ]]; then
   exit 1
 fi
 
+# Skills storage dir — create lazily if missing. Distinct filesystem
+# location from HOST_DIST_DIR so the read-only mount of dist/ doesn't
+# break uploads. Ownership tracks HOST_UID/HOST_GID so the container
+# (running as the same user via -u) can read + write.
+if [[ ! -d "${HOST_SKILLS_DIR}" ]]; then
+  mkdir -p "${HOST_SKILLS_DIR}"
+  echo "created ${HOST_SKILLS_DIR}"
+fi
+chown "${HOST_UID}:${HOST_GID}" "${HOST_SKILLS_DIR}" 2>/dev/null || true
+
 # ---------- preflight: config.yaml present ----------
 # Emit it from the template if it doesn't exist. Distinguish "the script
 # itself didn't emit yet" from "user deleted and wants to start fresh."
@@ -347,6 +361,7 @@ echo "   container:   ${CONTAINER_NAME}"
 echo "   HOST_PORT=${HOST_PORT}  →  container :8443"
 echo "   config:      ${CONFIG_PATH}  (read-only mount)"
 echo "   dist:        ${HOST_DIST_DIR}  →  /var/lib/agent-marketplace/dist (read-only mount)"
+echo "   skills:      ${HOST_SKILLS_DIR}  →  /var/lib/agent-marketplace/skills (read-write mount)"
 echo "   TLS:         ${TLS_DIR}  →  /etc/agent-marketplace/tls (read-only mount)"
 echo "   password:    ${PASS_SOURCE}  (env var MARKETPLACE_API_PASSWORD)"
 echo "   TLS SAN:     EXTERNAL_IP=${EXTERNAL_IP}"
@@ -372,7 +387,9 @@ exec docker run \
   -p "${HOST_PORT}:8443" \
   -u "${HOST_UID}:${HOST_GID}" \
   -e "MARKETPLACE_API_PASSWORD=${MARKETPLACE_API_PASSWORD}" \
+  -e "MARKETPLACE_API_SKILLS_DIR=/var/lib/agent-marketplace/skills" \
   -v "${CONFIG_PATH}:/etc/agent-marketplace/config.yaml:ro" \
   -v "${HOST_DIST_DIR}:/var/lib/agent-marketplace/dist:ro" \
+  -v "${HOST_SKILLS_DIR}:/var/lib/agent-marketplace/skills:rw" \
   "${TLS_VOLUME[@]}" \
   "${IMAGE}"

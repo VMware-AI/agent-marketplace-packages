@@ -30,11 +30,46 @@ import (
 
 // Dir is a read-only view of a dist/ directory.
 type Dir struct {
-	Path string // absolute path to dist/
+	// Path is the absolute path to the agent tarballs directory
+	// (mounted read-only in container deployments — the package source
+	// that the operator pushes to). Skill storage lives elsewhere
+	// (see SkillsRoot) so skill uploads don't require a writable
+	// mount of the agent tarballs source.
+	Path string
+	// SkillsRoot is the absolute path to the writable skills storage
+	// directory. Holds skill zips, their .sha256 sidecars, and
+	// skills-index.json. Distinct from Path because agent tarballs
+	// are immutable / read-only in production deployments while
+	// skills are uploaded at runtime and must be writable.
+	//
+	// When constructed via NewDir, SkillsRoot defaults to
+	// `<Path>/skills` for backward compatibility. Use NewDirEx to
+	// point at a separate physical mount (the recommended deployment
+	// shape).
+	SkillsRoot string
 }
 
-// NewDir returns a Dir rooted at path.
-func NewDir(path string) *Dir { return &Dir{Path: path} }
+// NewDir returns a Dir rooted at path. SkillsRoot defaults to
+// `<path>/skills` — the historical layout. Use NewDirEx to override.
+func NewDir(path string) *Dir {
+	return &Dir{Path: path, SkillsRoot: filepath.Join(path, skillsDirName)}
+}
+
+// NewDirEx returns a Dir with the agent tarballs source rooted at
+// distPath and the skills storage rooted at skillsRoot. The two
+// directories MUST be on different filesystems (or at least one
+// writable and the other read-only) so skill uploads can write
+// without breaking agent-tarball immutability.
+//
+// When skillsRoot is empty, falls back to the NewDir default
+// (`<distPath>/skills`) so callers don't accidentally produce a
+// misconfigured Dir.
+func NewDirEx(distPath, skillsRoot string) *Dir {
+	if skillsRoot == "" {
+		skillsRoot = filepath.Join(distPath, skillsDirName)
+	}
+	return &Dir{Path: distPath, SkillsRoot: skillsRoot}
+}
 
 // TarballPath returns the absolute path of a given tarball inside the dir.
 func (d *Dir) TarballPath(filename string) string {
@@ -170,30 +205,39 @@ func FileSHA256(path string) (string, error) {
 }
 
 // -----------------------------------------------------------------------
-// Skills layout (dist/skills/ + dist/skills-index.json).
+// Skills layout (<SkillsRoot>/ + <SkillsRoot>/skills-index.json).
 //
 // The skills subsystem is independent of the agent subsystem — it has its
-// own directory (dist/skills/), its own index file (dist/skills-index.json),
-// its own sidecar format (.zip.sha256 — same sha256sum format as the
-// agent tarballs). The methods below mirror the agent-facing ones above.
+// own directory (SkillsRoot), its own index file (skills-index.json
+// alongside the zips), its own sidecar format (.zip.sha256 — same
+// sha256sum format as the agent tarballs). The methods below mirror the
+// agent-facing ones above.
+//
+// SkillsRoot is intentionally a separate filesystem location from Path
+// (the agent tarballs source) so skill uploads can write to a writable
+// mount without making the agent tarballs directory mutable.
 // -----------------------------------------------------------------------
 
-// skillsDir is the on-disk subdirectory name under dist/ that holds
-// individual skill zips. Kept as a const so callers and tests stay in sync.
+// skillsDirName is retained as a const so the historical default
+// layout (`<distPath>/skills`) keeps working for callers using
+// NewDir. NewDirEx decouples the two roots; new deployments should
+// prefer that constructor.
 const skillsDirName = "skills"
 
 // skillsIndexName is the on-disk filename for the skills index, parallel
-// to dist/index.json for agents.
+// to index.json for agents.
 const skillsIndexName = "skills-index.json"
 
-// SkillsPath returns the absolute path to dist/skills/.
+// SkillsPath returns the absolute path to the skills directory
+// (the directory holding skill zips).
 func (d *Dir) SkillsPath() string {
-	return filepath.Join(d.Path, skillsDirName)
+	return d.SkillsRoot
 }
 
-// SkillsIndexPath returns the absolute path to dist/skills-index.json.
+// SkillsIndexPath returns the absolute path to skills-index.json
+// (sibling of the zips under SkillsRoot).
 func (d *Dir) SkillsIndexPath() string {
-	return filepath.Join(d.Path, skillsIndexName)
+	return filepath.Join(d.SkillsRoot, skillsIndexName)
 }
 
 // SkillZipPath returns the absolute path of a skill zip inside dist/skills/.

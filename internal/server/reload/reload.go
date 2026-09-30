@@ -158,7 +158,7 @@ func MaybeReload(s *server.State, dist *repo.Dir, fp *Fingerprints, logger *slog
 		// Don't proceed with a half-stat'd state — next tick will retry.
 		agentsChanged = false
 	}
-	skillsChanged, skillsFp, skillsErr := statFingerprint(filepath.Join(dist.Path, "skills-index.json"))
+	skillsChanged, skillsFp, skillsErr := statFingerprint(dist.SkillsIndexPath())
 	if skillsErr != nil && !errors.Is(skillsErr, os.ErrNotExist) {
 		if logger != nil {
 			logger.Warn("reload: stat skills-index.json failed, keeping old skills index",
@@ -240,7 +240,7 @@ func InitialFingerprints(dist *repo.Dir) Fingerprints {
 	if fi, err := os.Stat(filepath.Join(dist.Path, "index.json")); err == nil {
 		fp.Agents = Fingerprint{mtime: fi.ModTime(), size: fi.Size()}
 	}
-	if fi, err := os.Stat(filepath.Join(dist.Path, "skills-index.json")); err == nil {
+	if fi, err := os.Stat(dist.SkillsIndexPath()); err == nil {
 		fp.Skills = Fingerprint{mtime: fi.ModTime(), size: fi.Size()}
 	}
 	return fp

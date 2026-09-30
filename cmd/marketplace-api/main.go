@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"syscall"
 	"time"
 
@@ -39,7 +40,8 @@ type AuthConfig struct {
 }
 
 type RepoConfig struct {
-	DistDir string `yaml:"dist_dir"` // path to dist/
+	DistDir   string `yaml:"dist_dir"`   // path to dist/ (read-only; agent tarballs source)
+	SkillsDir string `yaml:"skills_dir"` // path to skills storage (writable; skills zips + skills-index.json). Optional — defaults to <dist_dir>/skills when empty.
 }
 
 type LoggingConfig struct {
@@ -111,7 +113,18 @@ func main() {
 		os.Exit(1)
 	}
 
-	dist := repo.NewDir(distDir)
+	// Skills storage is intentionally a separate path from the agent
+	// tarballs source. In container deployments dist/ is mounted
+	// read-only (the agent package source) while skills/ is mounted
+	// read-write (the skill upload target). When the operator doesn't
+	// pin skills_dir in config, default to <dist_dir>/skills so single-
+	// directory deployments still work.
+	skillsDir := cfg.Repo.SkillsDir
+	if skillsDir == "" {
+		skillsDir = filepath.Join(distDir, "skills")
+	}
+
+	dist := repo.NewDirEx(distDir, skillsDir)
 
 	// Capture the on-disk fingerprints BEFORE the initial load. If a reindex
 	// lands between this stat and the LoadIndex below, the initial load will
@@ -141,6 +154,7 @@ func main() {
 		"versions", totalVersions(idx),
 		"skills", len(sIdx.Skills),
 		"dist_dir", distDir,
+		"skills_dir", skillsDir,
 		"poll_interval", pollInterval.String(),
 	)
 
@@ -256,6 +270,9 @@ func applyEnvOverrides(cfg *Config) {
 	}
 	if v := os.Getenv("MARKETPLACE_API_DIST_DIR"); v != "" {
 		cfg.Repo.DistDir = v
+	}
+	if v := os.Getenv("MARKETPLACE_API_SKILLS_DIR"); v != "" {
+		cfg.Repo.SkillsDir = v
 	}
 	if v := os.Getenv("MARKETPLACE_API_LOG_LEVEL"); v != "" {
 		cfg.Logging.Level = v

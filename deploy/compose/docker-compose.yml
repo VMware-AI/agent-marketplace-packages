@@ -11,6 +11,13 @@
 # The dist/ directory is bind-mounted READ-ONLY from the host. The
 # container never writes to dist/. To pick up new packages, push them
 # to dist/ on the host and run `docker compose restart`.
+#
+# The skills-data/ directory is bind-mounted READ-WRITE — that's the
+# upload target for `agentpkg skills upload`. Skills and agent tarballs
+# are stored in physically separate paths because agent tarballs are
+# immutable from the marketplace's perspective (operators push them;
+# the marketplace only serves them) while skills are uploaded at any
+# time by community authors.
 
 services:
   marketplace-api:
@@ -30,6 +37,11 @@ services:
       - ../tls:/etc/agent-marketplace/tls:ro
       # dist/ contents (tarballs + sha256 + index.json) — read-only
       - ../../dist:/var/lib/agent-marketplace/dist:ro
+      # skills-data/ contents (skill zips + skills-index.json + .tmp/)
+      # — read-write. Created on first up if missing (see
+      # start_marketplace_docker.sh). Distinct filesystem location
+      # from dist/ so the read-only mount above doesn't break uploads.
+      - ../../skills-data:/var/lib/agent-marketplace/skills:rw
     healthcheck:
       test: ["CMD", "wget", "-q", "-O-", "https://localhost:8443/api/v1/health"]
       interval: 30s

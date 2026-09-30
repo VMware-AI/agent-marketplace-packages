@@ -411,8 +411,22 @@ func TestParseSkillZipName(t *testing.T) {
 		{"name_only", "hello.zip", "hello", "", "", false},
 		{"name_version", "hello-1.0.0.zip", "hello", "", "1.0.0", false},
 		{"not_zip", "hello-community-1.0.0.tar.gz", "", "", "", true},
-		{"too_many_dashes", "a-b-c-d.zip", "", "", "", true},
-		{"empty_name", "-community-1.0.0.zip", "", "", "", true},
+		// 4+ segments are now best-effort: last semver is the version,
+		// the rest (joined with `-`) is the name. Source stays empty
+		// (no second-to-last segment is a valid source).
+		{"four_seg_name_with_dashes", "dragon-ppt-maker-1.0.0.zip", "dragon-ppt-maker", "", "1.0.0", false},
+		// 5-segment CLI build output where name has internal dashes:
+		// last is the version, second-to-last is a valid source.
+		{"five_seg_name_with_dashes_and_source", "dragon-ppt-maker-community-1.0.0.zip", "dragon-ppt-maker", "community", "1.0.0", false},
+		// 4 segments where the last segment isn't a semver → no identity
+		// recoverable from filename; empty values, no error (caller falls
+		// back to SKILL.md / form fields).
+		{"four_seg_no_semver", "a-b-c-d.zip", "", "", "", false},
+		// Leading-dash edge case: parts[0] is empty so the name is
+		// empty, but parts[1] is a valid source and parts[2] is a
+		// valid semver, so source/version are still extracted. The
+		// empty name triggers the caller-side fallback to SKILL.md.
+		{"empty_name", "-community-1.0.0.zip", "", "community", "1.0.0", false},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

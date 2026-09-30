@@ -64,9 +64,10 @@ func NewSkillsInstallCmd() *cobra.Command {
 		download  bool
 		dryRun    bool
 		asJSON    bool
+		agents    string
 	)
 	c := &cobra.Command{
-		Use:   "install <name> [<name>...] [--version X.Y.Z] [--source community|internal] [--channel stable|beta|edge|internal] [--target-dir DIR] [--from <local.zip>] [--force] [--download-only] [--dry-run] [--json]",
+		Use:   "install <name> [<name>...] [--version X.Y.Z] [--source community|internal] [--channel stable|beta|edge|internal] [--target-dir DIR] [--from <local.zip>] [--force] [--download-only] [--dry-run] [--json] [--agents <csv>]",
 		Short: "Download one or more skill zips and extract them locally",
 		Long: `install downloads (or reads) one or more skill zips, verifies
 their sha256, unzips them into <target-dir>/<name>/<version>/ (or the
@@ -80,6 +81,17 @@ release.
 Use --from to install from a local zip file (skip the registry entirely).
 --from is single-skill only — combine it with multiple <name> args to
 get a clear error rather than ambiguous pairing.
+
+Use --agents to restrict fan-out to a subset of the agents declared
+in SKILL.md's 'agents:' field. Values are SKILL.md market-name IDs
+(matching DefaultAgentInstallPaths keys) — pass "openclaw",
+"opencode", or "hermes". Comma-separated. When omitted, the skill
+fans out to every agent in SKILL.md (the historical behavior).
+
+--agents is the recommended way to install a skill "for the single
+agent running on this VM" without littering orphan paths under the
+other agents' directories. Each value goes through skills.ResolveAgentID
+so marketplace-package names like "hermes-agent" are accepted too.
 
 Batch mode: pass several <name> arguments to install them all in one
 invocation. Each skill is processed independently; the exit code is
@@ -97,6 +109,28 @@ re-extract on top of an existing directory.`,
 			}
 			if len(args) > 1 && fromZip != "" {
 				return fmt.Errorf("--from is single-skill only; cannot combine with multiple names")
+			}
+			// Parse --agents (comma-separated). Empty means "no override;
+			// fan out to whatever SKILL.md declares" — preserves the
+			// historical behaviour. Empty values within the list (e.g. a
+			// trailing comma) are ignored rather than erroring.
+			var agentsFilter []string
+			if agents != "" {
+				for _, raw := range strings.Split(agents, ",") {
+					name := strings.TrimSpace(raw)
+					if name == "" {
+						continue
+					}
+					agentsFilter = append(agentsFilter, name)
+				}
+				if len(agentsFilter) == 0 {
+					return fmt.Errorf("--agents is set but contains no non-empty values")
+				}
+				for _, name := range agentsFilter {
+					if !skills.IsKnownMarketplaceName(name) {
+						return fmt.Errorf("--agents %q is not a known agent (or alias)", name)
+					}
+				}
 			}
 			// State root. When --target-dir is set (legacy single-root
 			// mode), it serves as both state root AND payload root —
@@ -125,6 +159,7 @@ re-extract on top of an existing directory.`,
 					Download:  download,
 					DryRun:    dryRun,
 					JSON:      asJSON,
+					Agents:    agentsFilter,
 				})
 			}
 			// Batch path: process every name independently, collect errors.
@@ -139,6 +174,7 @@ re-extract on top of an existing directory.`,
 				Download:  download,
 				DryRun:    dryRun,
 				JSON:      asJSON,
+				Agents:    agentsFilter,
 			})
 		},
 	}
@@ -151,6 +187,7 @@ re-extract on top of an existing directory.`,
 	c.Flags().BoolVar(&download, "download-only", false, "download the zip but don't extract or update state")
 	c.Flags().BoolVar(&dryRun, "dry-run", false, "print the plan, don't touch disk")
 	c.Flags().BoolVar(&asJSON, "json", false, "emit JSON instead of a table")
+	c.Flags().StringVar(&agents, "agents", "", "comma-separated list of agents to install for (overrides SKILL.md's agents: field)")
 	return c
 }
 
@@ -162,6 +199,10 @@ re-extract on top of an existing directory.`,
 // when empty, payloads fan out to per-agent paths. StateDir is where
 // state.json + the `latest` symlink live — defaults to
 // $HOME/.local/share/agentpkg/skills.
+//
+// Agents, when non-empty, restricts fan-out to the listed agents.
+// Values go through skills.ResolveAgentID so marketplace names like
+// "hermes-agent" are accepted alongside the canonical agent IDs.
 type installParams struct {
 	Name      string
 	Version   string
@@ -174,6 +215,7 @@ type installParams struct {
 	Download  bool
 	DryRun    bool
 	JSON      bool
+	Agents    []string
 }
 
 // runInstall executes the full install pipeline. Kept as a free function
@@ -239,11 +281,13 @@ func runInstall(cmd *cobra.Command, p installParams) error {
 		// For local installs the version comes from the zip filename,
 		// not the server's index. The user can still pin --version to
 		// override (useful when the filename has been normalized away
-		// from a real semver, e.g. the build command's append).
+		// from a real semver, e.g. the build command's append, or when
+		// a community zip has internal dashes in the name so the
+		// filename no longer matches the 1-3 segment layouts).
 		if p.Version == "" {
-			_, _, fileVer, perr := skills.ParseZipFilename(zipFilename)
-			if perr != nil {
-				return fmt.Errorf("cannot infer version from %q: %w (pass --version explicitly)", zipFilename, perr)
+			_, _, fileVer, _ := skills.ParseZipFilename(zipFilename)
+			if fileVer == "" {
+				return fmt.Errorf("cannot infer version from %q (pass --version explicitly)", zipFilename)
 			}
 			p.Version = fileVer
 		}
@@ -335,6 +379,30 @@ func runInstall(cmd *cobra.Command, p installParams) error {
 		if err := client.Do(svPath, &sv); err != nil {
 			return fmt.Errorf("fetch skill version metadata: %w", err)
 		}
+	}
+
+	// 4a. Apply the --agents filter (when provided). Translate each
+	// marketplace name to its agent ID via ResolveAgentID so values
+	// like "hermes-agent" map to the canonical "hermes" key. Then
+	// intersect with sv.Agents; entries not declared in SKILL.md's
+	// agents: field are silently dropped (the author of the SKILL is
+	// authoritative — we never fan out beyond what the manifest allows).
+	if len(p.Agents) > 0 {
+		wanted := make(map[string]bool, len(p.Agents))
+		for _, raw := range p.Agents {
+			wanted[skills.ResolveAgentID(raw)] = true
+		}
+		kept := sv.Agents[:0]
+		for _, a := range sv.Agents {
+			if wanted[a] {
+				kept = append(kept, a)
+			}
+		}
+		if len(kept) == 0 {
+			return fmt.Errorf("--agents filter %v matched none of SKILL.md agents %v",
+				p.Agents, sv.Agents)
+		}
+		sv.Agents = kept
 	}
 
 	// 5. Resolve install targets from sv.Agents + sv.InstallPaths.

@@ -620,7 +620,9 @@ func TestHandleSkillUpload_OK(t *testing.T) {
 		t.Errorf("sidecar not on disk: %v", err)
 	}
 	// skills-index.json should have been (re)written.
-	idxData, err := os.ReadFile(filepath.Join(dist, "skills-index.json"))
+	// (Lives inside SkillsRoot, alongside the zips — NewDir's default
+	// SkillsRoot is <dist>/skills.)
+	idxData, err := os.ReadFile(filepath.Join(dist, "skills", "skills-index.json"))
 	if err != nil {
 		t.Fatalf("read index: %v", err)
 	}
@@ -662,18 +664,44 @@ func TestHandleSkillUpload_DuplicateIs409(t *testing.T) {
 	}
 }
 
-func TestHandleSkillUpload_NameMismatchIs400(t *testing.T) {
+func TestHandleSkillUpload_NameMismatchIs201(t *testing.T) {
 	dist := t.TempDir()
 	s := NewState(repo.NewDir(dist), nil, nil)
 
-	// Filename says "hello", SKILL.md says "goodbye".
+	// Filename says "hello", SKILL.md says "goodbye". Filename is
+	// only a hint — SKILL.md is the authoritative identity, so the
+	// upload succeeds (201) with a warning logged. The on-disk
+	// filename uses SKILL.md's name (goodbye-community-1.0.0.zip).
 	zipBody := buildSkillZip(t, "---\nname: goodbye\ndescription: Says goodbye to the user in a friendly manner.\nversion: \"1.0.0\"\ncategory: dev\nagents: [all]\n---\nbody\n")
 	rr := doUpload(t, HandleSkillUpload(s), "/api/v1/skills", "hello-community-1.0.0.zip", zipBody)
-	if rr.Code != http.StatusBadRequest {
-		t.Fatalf("expected 400, got %d (%s)", rr.Code, rr.Body.String())
+	if rr.Code != http.StatusCreated {
+		t.Fatalf("expected 201, got %d (%s)", rr.Code, rr.Body.String())
 	}
-	if !strings.Contains(rr.Body.String(), "name_mismatch") {
-		t.Errorf("expected name_mismatch code, got: %s", rr.Body.String())
+	if !strings.Contains(rr.Body.String(), "goodbye-community-1.0.0.zip") {
+		t.Errorf("expected canonical filename using SKILL.md name, got: %s", rr.Body.String())
+	}
+}
+
+// TestHandleSkillUpload_NameWithInternalDashes covers the community-zip
+// case where the skill name itself contains dashes (e.g.
+// "dragon-ppt-maker-1.0.0.zip"). The filename parser must not reject
+// 4+ dash-separated segments — it's a hint, not authoritative. SKILL.md
+// supplies the canonical name; the upload succeeds.
+func TestHandleSkillUpload_NameWithInternalDashes(t *testing.T) {
+	dist := t.TempDir()
+	s := NewState(repo.NewDir(dist), nil, nil)
+
+	zipBody := buildSkillZip(t, "---\nname: dragon-ppt-maker\ndescription: Generates dragon-themed PPT decks.\nversion: \"1.0.0\"\ncategory: content\nagents: [opencode]\ninstall_method: zip-extract\n---\nbody\n")
+	// Filename has 4 dash-separated segments (dragon-ppt-maker-1.0.0).
+	// Old behaviour: 400 bad_filename. New: best-effort parse extracts
+	// (name="dragon-ppt-maker", version="1.0.0", source=""); SKILL.md
+	// and form fields fill the gaps; upload succeeds.
+	rr := doUpload(t, HandleSkillUpload(s), "/api/v1/skills?source=community", "dragon-ppt-maker-1.0.0.zip", zipBody)
+	if rr.Code != http.StatusCreated {
+		t.Fatalf("expected 201, got %d (%s)", rr.Code, rr.Body.String())
+	}
+	if !strings.Contains(rr.Body.String(), "dragon-ppt-maker-community-1.0.0.zip") {
+		t.Errorf("expected canonical 4-segment filename with source, got: %s", rr.Body.String())
 	}
 }
 
@@ -746,7 +774,9 @@ func TestHandleSkillDelete_SingleVersion(t *testing.T) {
 		t.Errorf("expected empty index after delete, got %+v", pub)
 	}
 	// skills-index.json should reflect this.
-	idxData, _ := os.ReadFile(filepath.Join(dist, "skills-index.json"))
+	// (Lives inside SkillsRoot, alongside the zips — NewDir's default
+	// SkillsRoot is <dist>/skills.)
+	idxData, _ := os.ReadFile(filepath.Join(dist, "skills", "skills-index.json"))
 	var persisted skills.Index
 	json.Unmarshal(idxData, &persisted)
 	if len(persisted.Skills) != 0 {

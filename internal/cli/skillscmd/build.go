@@ -164,6 +164,15 @@ func reindexSkills(outDir string, dryRun bool, out io.Writer) error {
 			fmt.Fprintf(out, "WARN: cannot parse zip filename %s: %v\n", zipName, perr)
 			continue
 		}
+		// ParseZipFilename now returns empty values for unrecognised
+		// layouts (best-effort) rather than erroring. CLI build needs
+		// a complete (name, source, version) tuple to write to the
+		// index, so skip zips whose identity can't be derived from
+		// the filename — the operator should rename it and rerun.
+		if name == "" || version == "" {
+			fmt.Fprintf(out, "WARN: cannot derive identity from %s (missing name/version, rename and rerun)\n", zipName)
+			continue
+		}
 		if m.Name != name || m.Version != version {
 			fmt.Fprintf(out,
 				"WARN: %s: SKILL.md says name=%q version=%q but filename says %q/%q — using filename as identity\n",

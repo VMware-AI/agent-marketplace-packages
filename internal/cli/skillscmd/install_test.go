@@ -423,6 +423,64 @@ func TestUninstall_SingleVersion(t *testing.T) {
 	}
 }
 
+// TestUninstall_LastVersion_CleansEmptyParents verifies that uninstalling
+// the LAST version of a skill lifts the now-empty per-agent parent dir +
+// the central <StateDir>/<name>/ parent. Without this cleanup the user
+// is left with cosmetic empty dirs like
+// `~/.openclaw/skills/e2eskill/` (no files inside) after a clean
+// install → uninstall cycle.
+func TestUninstall_LastVersion_CleansEmptyParents(t *testing.T) {
+	dir := t.TempDir()
+	target := filepath.Join(dir, "skills")
+
+	zipBytes, _ := makeSkillZip(t, "---\nname: hello\ndescription: Says hello to the user in a friendly manner.\nversion: \"1.0.0\"\ncategory: dev\nagents: [all]\n---\nbody\n")
+	zipPath := writeZipFile(t, dir, "hello-community-1.0.0.zip", zipBytes)
+	if _, err := runCmd(t, NewSkillsInstallCmd(), "hello", "--from", zipPath, "--target-dir", target); err != nil {
+		t.Fatal(err)
+	}
+
+	// Sanity: install populated the dirs we expect.
+	if _, err := os.Stat(filepath.Join(target, "hello", "1.0.0", "SKILL.md")); err != nil {
+		t.Fatalf("post-install sanity: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(target, "hello", "state.json")); err != nil {
+		t.Fatalf("post-install state.json sanity: %v", err)
+	}
+
+	if _, err := runCmd(t, NewSkillsUninstallCmd(), "hello", "--version", "1.0.0", "--target-dir", target); err != nil {
+		t.Fatal(err)
+	}
+
+	// Single-root mode: everything sat under <target>/<name>/. That dir
+	// should now be GONE — the per-version dir, the state.json, the
+	// `latest` symlink, AND the parent all gone. The grandparent
+	// `<target>` (which equals `<tempdir>/skills` in this test) stays —
+	// only the per-skill parent should be lifted.
+	if _, err := os.Stat(filepath.Join(target, "hello")); !os.IsNotExist(err) {
+		t.Errorf("<target>/<name>/ parent should be removed, got: %v", err)
+	}
+}
+
+// TestUninstall_AllVersions_CleansEmptyParents: same empty-parent
+// guarantee for the no-`--version` path. The all-versions code path
+// also calls RemoveAll on the per-agent parent + central stash.
+func TestUninstall_AllVersions_CleansEmptyParents(t *testing.T) {
+	dir := t.TempDir()
+	target := filepath.Join(dir, "skills")
+
+	zipBytes, _ := makeSkillZip(t, "---\nname: hello\ndescription: Says hello to the user in a friendly manner.\nversion: \"1.0.0\"\ncategory: dev\nagents: [all]\n---\nbody\n")
+	zipPath := writeZipFile(t, dir, "hello-community-1.0.0.zip", zipBytes)
+	if _, err := runCmd(t, NewSkillsInstallCmd(), "hello", "--from", zipPath, "--target-dir", target); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := runCmd(t, NewSkillsUninstallCmd(), "hello", "--target-dir", target); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Join(target, "hello")); !os.IsNotExist(err) {
+		t.Errorf("<target>/<name>/ parent should be removed, got: %v", err)
+	}
+}
+
 // TestUninstall_DryRun: --dry-run must not touch disk.
 func TestUninstall_DryRun(t *testing.T) {
 	dir := t.TempDir()
@@ -452,6 +510,133 @@ func TestUninstall_DryRun(t *testing.T) {
 // as the targetDir override, which caused ResolveTargets to dedup all
 // agents into one path. Also verifies installZipExtract writes to
 // every target (was previously Targets[0] only).
+// TestInstall_AgentsFilter_RestrictsFanOut verifies --agents <csv>
+// restricts fan-out to the listed agents only. Default behaviour (no
+// --agents) keeps fanning out to every entry in SKILL.md's agents:
+// field; --agents is the override that single-agent prod deployments
+// rely on to avoid littering orphan paths under agents that aren't
+// installed on this VM.
+func TestInstall_AgentsFilter_RestrictsFanOut(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("HOME", dir)
+	home, _ := os.UserHomeDir()
+
+	zipBytes, _ := makeSkillZip(t, "---\nname: hello\ndescription: Says hello to the user in a friendly manner.\nversion: \"1.0.0\"\ncategory: dev\nagents: [opencode, openclaw, hermes]\n---\nbody\n")
+	zipPath := writeZipFile(t, dir, "hello-community-1.0.0.zip", zipBytes)
+
+	cmd := NewSkillsInstallCmd()
+	out, err := runCmd(t, cmd, "hello", "--from", zipPath, "--agents", "openclaw")
+	if err != nil {
+		t.Fatalf("install --agents openclaw: %v\n%s", err, out)
+	}
+
+	// Only the openclaw path should be populated. opencode and hermes
+	// dirs are absent (no orphan under their roots).
+	if _, err := os.Stat(filepath.Join(home, ".openclaw", "skills", "hello", "1.0.0", "SKILL.md")); err != nil {
+		t.Errorf("openclaw path missing SKILL.md: %v", err)
+	}
+	for _, absent := range []string{
+		filepath.Join(home, ".config", "opencode", "skills", "hello"),
+		filepath.Join(home, ".hermes", "optional-skills", "hello"),
+	} {
+		if _, err := os.Stat(absent); !os.IsNotExist(err) {
+			t.Errorf("expected absent after --agents filter, found %s: %v", absent, err)
+		}
+	}
+
+	// state.json records exactly one resolved_path (the one we asked for).
+	statePath := filepath.Join(home, ".local", "share", "agentpkg", "skills", "hello", "state.json")
+	stateBytes, err := os.ReadFile(statePath)
+	if err != nil {
+		t.Fatalf("state.json missing: %v", err)
+	}
+	var st SkillInstallState
+	if err := json.Unmarshal(stateBytes, &st); err != nil {
+		t.Fatal(err)
+	}
+	if len(st.ResolvedPaths) != 1 {
+		t.Errorf("ResolvedPaths has %d entries, want 1: %+v", len(st.ResolvedPaths), st.ResolvedPaths)
+	}
+	if _, ok := st.ResolvedPaths["openclaw"]; !ok {
+		t.Errorf("missing ResolvedPaths[openclaw]: %+v", st.ResolvedPaths)
+	}
+}
+
+// TestInstall_AgentsFilter_AcceptsMarketplaceAlias verifies that
+// --agents hermes-agent maps to the canonical "hermes" key (via
+// skills.ResolveAgentID). Without this, the daemon would have to know
+// the alias mapping itself; the CLI surface owns it.
+func TestInstall_AgentsFilter_AcceptsMarketplaceAlias(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("HOME", dir)
+	home, _ := os.UserHomeDir()
+
+	zipBytes, _ := makeSkillZip(t, "---\nname: hello\ndescription: Says hello to the user in a friendly manner.\nversion: \"1.0.0\"\ncategory: dev\nagents: [opencode, openclaw, hermes]\n---\nbody\n")
+	zipPath := writeZipFile(t, dir, "hello-community-1.0.0.zip", zipBytes)
+
+	cmd := NewSkillsInstallCmd()
+	out, err := runCmd(t, cmd, "hello", "--from", zipPath, "--agents", "hermes-agent")
+	if err != nil {
+		t.Fatalf("install --agents hermes-agent: %v\n%s", err, out)
+	}
+
+	if _, err := os.Stat(filepath.Join(home, ".hermes", "optional-skills", "hello", "1.0.0", "SKILL.md")); err != nil {
+		t.Errorf("hermes path missing SKILL.md after --agents hermes-agent: %v", err)
+	}
+}
+
+// TestInstall_AgentsFilter_UnknownValueIsRejected guards against
+// silently no-op'ing when the operator typos an agent name. Better to
+// fail fast than to write to the central stash or skip entirely.
+func TestInstall_AgentsFilter_UnknownValueIsRejected(t *testing.T) {
+	dir := t.TempDir()
+	zipBytes, _ := makeSkillZip(t, "---\nname: hello\ndescription: Says hello to the user in a friendly manner.\nversion: \"1.0.0\"\ncategory: dev\nagents: [opencode]\n---\nbody\n")
+	zipPath := writeZipFile(t, dir, "hello-community-1.0.0.zip", zipBytes)
+
+	cmd := NewSkillsInstallCmd()
+	_, err := runCmd(t, cmd, "hello", "--from", zipPath, "--agents", "totally-not-an-agent")
+	if err == nil {
+		t.Fatal("expected error for unknown --agents value, got nil")
+	}
+	if !strings.Contains(err.Error(), "totally-not-an-agent") {
+		t.Errorf("error should mention the bad value, got: %v", err)
+	}
+}
+
+// TestInstall_AgentsFilter_EmptyAfterParseIsRejected catches
+// `--agents ,,,` (only commas / whitespace) — that's a malformed flag
+// from the operator's perspective and should fail loudly.
+func TestInstall_AgentsFilter_EmptyAfterParseIsRejected(t *testing.T) {
+	dir := t.TempDir()
+	zipBytes, _ := makeSkillZip(t, "---\nname: hello\ndescription: Says hello to the user in a friendly manner.\nversion: \"1.0.0\"\ncategory: dev\nagents: [opencode]\n---\nbody\n")
+	zipPath := writeZipFile(t, dir, "hello-community-1.0.0.zip", zipBytes)
+
+	cmd := NewSkillsInstallCmd()
+	_, err := runCmd(t, cmd, "hello", "--from", zipPath, "--agents", " , , , ")
+	if err == nil {
+		t.Fatal("expected error for all-empty --agents, got nil")
+	}
+}
+
+// TestResolveAgentID sanity-check the alias mapping. Lives in
+// install_test.go because the only consumer is the install flow today;
+// if --agents is added to uninstall later, move this to a shared
+// test file.
+func TestResolveAgentID(t *testing.T) {
+	if got := skills.ResolveAgentID("openclaw"); got != "openclaw" {
+		t.Errorf("ResolveAgentID(openclaw) = %q, want openclaw (passthrough)", got)
+	}
+	if got := skills.ResolveAgentID("hermes-agent"); got != "hermes" {
+		t.Errorf("ResolveAgentID(hermes-agent) = %q, want hermes (alias)", got)
+	}
+	if !skills.IsKnownMarketplaceName("hermes-agent") {
+		t.Errorf("IsKnownMarketplaceName(hermes-agent) = false, want true (alias)")
+	}
+	if skills.IsKnownMarketplaceName("totally-bogus") {
+		t.Errorf("IsKnownMarketplaceName(totally-bogus) = true, want false")
+	}
+}
+
 func TestInstall_PerAgentFanOut(t *testing.T) {
 	dir := t.TempDir()
 	// Override $HOME so the per-agent default paths point inside dir.

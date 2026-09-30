@@ -25,6 +25,11 @@ repo:
   # 容器内 dist/ 目录的路径。脚本会把宿主 ${REPO_ROOT}/dist bind-mount 到这里（只读）。
   dist_dir: "/var/lib/agent-marketplace/dist"
 
+  # skills 存储目录的容器内路径。脚本会把宿主 ${REPO_ROOT}/skills-data bind-mount 到这里（可写）。
+  # dist 是只读的（agent 包源，运营 push 后需要重启才能生效），所以 skill 不能放 dist/ 下。
+  # 留空 = 默认 <dist_dir>/skills（仍兼容但不推荐 — dist 不能写时 upload 会 EROFS）。
+  skills_dir: "/var/lib/agent-marketplace/skills"
+
 logging:
   # 日志级别过滤 —— 比此级别低的日志将被丢弃。
   # 合法值: debug | info | warn | error

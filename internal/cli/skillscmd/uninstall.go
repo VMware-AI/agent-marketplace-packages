@@ -111,12 +111,16 @@ func runUninstall(cmd *cobra.Command, p uninstallParams) error {
 
 	// Single-version mode.
 	if p.Version != "" {
-		dir := versionDir(payloadRoot, st, p.Name, p.Version)
 		if _, ok := st.InstalledVersions[p.Version]; !ok {
 			return fmt.Errorf("%s version %s is not installed", p.Name, p.Version)
 		}
-		if err := os.RemoveAll(dir); err != nil {
-			return fmt.Errorf("remove %s: %w", dir, err)
+		// Wipe every per-agent dir (one per ResolvedPaths entry). The legacy
+		// versionDir() helper only returned the FIRST agent's path, leaving
+		// 2+ agents' dirs behind — that's the bug this branch fixes.
+		for _, dir := range payloadDirs(payloadRoot, st, p.Name) {
+			if err := os.RemoveAll(filepath.Join(dir, p.Version)); err != nil {
+				return fmt.Errorf("remove %s: %w", filepath.Join(dir, p.Version), err)
+			}
 		}
 		// Update or clear `latest` symlink.
 		if p.Version == st.CurrentVersion {
@@ -136,8 +140,25 @@ func runUninstall(cmd *cobra.Command, p uninstallParams) error {
 		if !p.KeepState {
 			delete(st.InstalledVersions, p.Version)
 			if len(st.InstalledVersions) == 0 {
+				// Last version gone — safe to lift the now-empty per-agent
+				// parent dirs and the central <StateDir>/<name> dir. We
+				// moved this from inside the per-version loop because the
+				// multi-version case (uninstall --version 1.0.0 when 2.0.0
+				// is still installed) must NOT nuke the sibling version.
+				for _, dir := range payloadDirs(payloadRoot, st, p.Name) {
+					if err := os.RemoveAll(dir); err != nil {
+						return fmt.Errorf("remove %s: %w", dir, err)
+					}
+				}
 				if err := removeSkillState(p.StateDir, p.Name); err != nil {
 					return err
+				}
+				// removeSkillState cleared state.json + the `latest`
+				// symlink under <StateDir>/<name>/. Lift the now-empty
+				// parent too so a clean uninstall leaves no cosmetic
+				// leftovers in the central stash. No-op if already gone.
+				if err := os.RemoveAll(filepath.Join(p.StateDir, p.Name)); err != nil {
+					return fmt.Errorf("remove %s: %w", filepath.Join(p.StateDir, p.Name), err)
 				}
 				fmt.Fprintf(out, "Uninstalled %s %s (state cleared)\n", p.Name, p.Version)
 				return nil
@@ -170,26 +191,17 @@ func runUninstall(cmd *cobra.Command, p uninstallParams) error {
 	return nil
 }
 
-// versionDir returns the on-disk path for one (name, version) pair.
-// When payloadRoot is set (legacy single-root mode), uses
-// <payloadRoot>/<name>/<version>. Otherwise uses the per-agent path
-// recorded in state.ResolvedPaths; if multiple agents share the same
-// path it appears once. Falls back to <StateDir>/<name>/<version> when
-// no resolved path exists (e.g. very old state.json).
-func versionDir(payloadRoot string, st *SkillInstallState, name, version string) string {
-	if payloadRoot != "" {
-		return filepath.Join(payloadRoot, name, version)
-	}
-	for _, p := range st.ResolvedPaths {
-		return filepath.Join(p, version)
-	}
-	return filepath.Join(st.TargetDir, version)
-}
-
 // payloadDirs returns the list of distinct on-disk dirs to wipe for
 // "uninstall all versions". In legacy single-root mode (payloadRoot set),
 // returns one dir. In per-agent mode, returns one dir per agent's
 // resolved path.
+//
+// Exposed so the single-version mode in runUninstall can ALSO use it:
+// instead of relying on versionDir (which only returned the first
+// agent's path), we wipe every per-agent dir explicitly. That way the
+// historical multi-version state.json files with 2+ resolved_paths
+// get fully cleaned, and the install-time SKILL.md fan-out doesn't
+// leave stale dirs behind.
 func payloadDirs(payloadRoot string, st *SkillInstallState, name string) []string {
 	if payloadRoot != "" {
 		return []string{filepath.Join(payloadRoot, name)}
@@ -208,6 +220,28 @@ func payloadDirs(payloadRoot string, st *SkillInstallState, name string) []strin
 		return []string{filepath.Join(st.TargetDir)}
 	}
 	return out
+}
+
+// versionDir returns the on-disk path for one (name, version) pair.
+// When payloadRoot is set (legacy single-root mode), uses
+// <payloadRoot>/<name>/<version>. Otherwise returns the FIRST
+// per-agent path recorded in state.ResolvedPaths; if multiple agents
+// share the same path it appears once. Falls back to <StateDir>/<name>/<version> when
+// no resolved path exists (e.g. very old state.json).
+//
+// Note: this is ONLY used for the dry-run preview path. The actual
+// single-version uninstall uses payloadDirs() so every per-agent dir
+// gets wiped (not just the first one — the per-agent path iteration
+// here is preserved for backward compat with callers that only have
+// a single resolved_path entry to print).
+func versionDir(payloadRoot string, st *SkillInstallState, name, version string) string {
+	if payloadRoot != "" {
+		return filepath.Join(payloadRoot, name, version)
+	}
+	for _, p := range st.ResolvedPaths {
+		return filepath.Join(p, version)
+	}
+	return filepath.Join(st.TargetDir, version)
 }
 
 // nextInstalledVersion returns the highest-semver installed version
