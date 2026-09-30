@@ -3,7 +3,9 @@ package cli
 import (
 	"encoding/json"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -316,3 +318,105 @@ func TestRmdirEmptyParents(t *testing.T) {
 		t.Errorf("case 4: got %q want \"\" for missing path", got)
 	}
 }
+
+// TestWrapInstallScriptExit_PropagatesExit10 is the F015 regression:
+//
+// install.sh's "already installed" path exits 10 (a documented semantic —
+// see docs/install-protocol.md / hermes-agent's install.sh line 137).
+// The previous runInstall swallowed that code and bubbled up a generic
+// error, so the agentpkg binary exited 1 while the message said
+// "exit 10" — orchestrators couldn't reliably distinguish "duplicate
+// install" from a real failure. The fix detects *exec.ExitError and
+// re-emits as an ExitCoder carrying the script's exit code.
+//
+// We don't stand up a real tarball + install.sh here — the wrap is a
+// pure function of (err, name, version) → error. Running a synthetic
+// sh -c "exit N" captures the *exec.ExitError that install.sh would
+// produce.
+func TestWrapInstallScriptExit_PropagatesExit10(t *testing.T) {
+	// exec.Command's Run() returns an *exec.ExitError on non-zero
+	// exit — the same shape install.sh produces when it exits 10
+	// for "already installed". Run sh -c "exit 10" to capture one.
+	err := exec.Command("sh", "-c", "exit 10").Run()
+	if exitErr, ok := err.(*exec.ExitError); !ok || exitErr.ExitCode() != 10 {
+		t.Fatalf("test setup: expected *exec.ExitError with code 10, got %T %v", err, err)
+	}
+
+	wrapped := wrapInstallScriptExit(err, "hermes-agent", "0.19.0")
+	if wrapped == nil {
+		t.Fatal("wrapInstallScriptExit returned nil")
+	}
+
+	// The wrapped error must implement ExitCoder with code 10, so
+	// main.go's errors.As path translates to os.Exit(10) — matching
+	// the install.sh's semantic.
+	var ec ExitCoder
+	if !errorsAs(wrapped, &ec) {
+		t.Fatalf("wrapped error should implement ExitCoder; got %T: %v", wrapped, wrapped)
+	}
+	if ec.ExitCode() != 10 {
+		t.Errorf("exit code = %d, want 10", ec.ExitCode())
+	}
+
+	// The message must mention agent + version + exit code so
+	// operators can read stderr and immediately tell what happened.
+	msg := wrapped.Error()
+	for _, want := range []string{"hermes-agent", "0.19.0", "10"} {
+		if !strings.Contains(msg, want) {
+			t.Errorf("error message missing %q: %s", want, msg)
+		}
+	}
+}
+
+// TestWrapInstallScriptExit_PropagatesOtherCodes confirms the wrap
+// preserves arbitrary non-zero exit codes (e.g. install.sh exits 50
+// for checksum mismatch per docs/install-protocol.md). Without this,
+// every non-zero script exit would collapse to agentpkg's default 1.
+func TestWrapInstallScriptExit_PropagatesOtherCodes(t *testing.T) {
+	for _, code := range []int{20, 30, 40, 50, 60, 70, 99} {
+		err := exec.Command("sh", "-c", "exit "+strconv.Itoa(code)).Run()
+		exitErr, ok := err.(*exec.ExitError)
+		if !ok {
+			t.Fatalf("code=%d: expected *exec.ExitError, got %T", code, err)
+		}
+		if exitErr.ExitCode() != code {
+			t.Fatalf("code=%d: setup got exit %d", code, exitErr.ExitCode())
+		}
+		wrapped := wrapInstallScriptExit(err, "opencode", "1.18.9")
+		var ec ExitCoder
+		if !errorsAs(wrapped, &ec) {
+			t.Fatalf("code=%d: wrapped error should implement ExitCoder; got %T", code, wrapped)
+		}
+		if ec.ExitCode() != code {
+			t.Errorf("code=%d: ExitCode() = %d, want %d", code, ec.ExitCode(), code)
+		}
+	}
+}
+
+// TestWrapInstallScriptExit_PassesThroughNonExitError confirms that
+// errors that aren't *exec.ExitError (e.g. tar extraction failure)
+// pass through unchanged — they have no script exit code to
+// propagate, and we shouldn't fabricate one.
+func TestWrapInstallScriptExit_PassesThroughNonExitError(t *testing.T) {
+	plain := errorString("some other failure (no script exit code)")
+	got := wrapInstallScriptExit(plain, "opencode", "1.18.9")
+	if got != plain {
+		t.Errorf("non-ExitError should pass through unchanged; got %v", got)
+	}
+}
+
+// TestWrapInstallScriptExit_NilReturnsNil is the trivial nil → nil
+// case so callers can use the wrap unconditionally without a nil check.
+func TestWrapInstallScriptExit_NilReturnsNil(t *testing.T) {
+	if got := wrapInstallScriptExit(nil, "x", "1.0.0"); got != nil {
+		t.Errorf("nil → nil; got %v", got)
+	}
+}
+
+// errorString is a tiny newtype to satisfy the error interface for the
+// "non-ExitError" test case. Plain string would not work because the
+// test wants to compare identity (the wrap should pass it through
+// unchanged).
+type errorString string
+
+func (e errorString) Error() string { return string(e) }

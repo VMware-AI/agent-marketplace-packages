@@ -1,11 +1,14 @@
 package cli
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/spf13/cobra"
@@ -55,8 +58,16 @@ Password sources, mutually exclusive (priority: --password > --password-stdin
                        table; intended for the agentpkg daemon and similar
                        managed callers — prefer --password-file or
                        --password-stdin in shell scripts)
-  --password-stdin     read the password from stdin (recommended for scripts)
-  --password-file <f>  read the password from a file (chmod 0600)
+  --password-stdin     read the password from stdin (recommended for scripts).
+                       Trailing whitespace (newlines, tabs, spaces, CR) is
+                       trimmed — feed the bare password, e.g.
+                           printf '%s' "$password" | agentpkg login ...
+                       Copy-pasting with stray whitespace on the end will be
+                       stripped silently and may produce a wrong-password error.
+  --password-file <f>  read the password from a file. The file MUST be mode
+                       0600 or 0400 — looser permissions are refused with an
+                       error so we don't write a world-readable secret into
+                       the credentials file. Use 'chmod 0600 <file>' first.
   (none)               prompt interactively from /dev/tty
 
 TLS options (persisted to config.yaml; consumed by all subsequent commands):
@@ -65,7 +76,11 @@ TLS options (persisted to config.yaml; consumed by all subsequent commands):
                        the marketplace-api (INSECURE — connections are
                        not authenticated against the server's certificate
                        chain). Use only for self-signed test deployments.
-                       Wires through to every later agentpkg invocation.
+                       A warning is printed on every subsequent agentpkg
+                       invocation that inherits this setting, but only
+                       for https:// servers — http:// URLs are plaintext
+                       regardless of this flag and don't deserve the TLS
+                       warning noise.
   --ca-cert <path>     path to a PEM-encoded CA bundle used to verify the
                        marketplace-api's certificate. Use for private-PKI
                        deployments where the root CA is not in the system
@@ -111,8 +126,8 @@ TLS options (persisted to config.yaml; consumed by all subsequent commands):
 	}
 	c.Flags().StringVar(&server, "server", "", "marketplace-api base URL, e.g. https://marketplace.example.com")
 	c.Flags().StringVar(&password, "password", "", "pass the password directly (mutually exclusive with --password-stdin and --password-file)")
-	c.Flags().BoolVar(&passwordStdin, "password-stdin", false, "read password from stdin")
-	c.Flags().StringVar(&passwordFile, "password-file", "", "read password from a file (chmod 0600)")
+	c.Flags().BoolVar(&passwordStdin, "password-stdin", false, "read password from stdin (trailing whitespace is trimmed)")
+	c.Flags().StringVar(&passwordFile, "password-file", "", "read password from a file (MUST be mode 0600 or 0400)")
 	c.Flags().BoolVar(&skipCertVerify, "skip-cert-verify", false, "skip TLS certificate verification for the marketplace-api (INSECURE; persisted to config.yaml)")
 	c.Flags().StringVar(&caCert, "ca-cert", "", "path to PEM CA bundle for the marketplace-api (persisted to config.yaml)")
 	return c
@@ -138,7 +153,16 @@ func doLogin(server, password, cfgPath, credsPath string, skipCertVerify bool, c
 	if err != nil {
 		return err
 	}
-	if skipCertVerify {
+	// F006 (tested 2026-09-30): the previous --skip-cert-verify warning
+	// fired for every server URL, including plaintext http:// — where
+	// TLS is not in play and the message is just noise. Suppress for
+	// non-https URLs so an operator who logged into a development
+	// http://localhost server doesn't see misleading "TLS
+	// verification is disabled" warnings on every subsequent
+	// whoami / index / install call. We keep the warning for https://
+	// because that's the case where the user is consciously opting
+	// out of certificate validation against an authenticated server.
+	if skipCertVerify && isHTTPS(server) {
 		fmt.Fprintf(os.Stderr,
 			"WARN: TLS certificate verification is disabled for %s (--skip-cert-verify) — connections will not be authenticated\n",
 			server)
@@ -217,22 +241,40 @@ func readPassword(password string, stdin bool, file string) (string, error) {
 		if err != nil {
 			return "", fmt.Errorf("read stdin: %w", err)
 		}
-		// Trim trailing newline if present.
-		for len(data) > 0 && (data[len(data)-1] == '\n' || data[len(data)-1] == '\r') {
-			data = data[:len(data)-1]
-		}
+		// F003 (tested 2026-09-30): the previous version only stripped
+		// trailing '\n' / '\r', leaving trailing tabs / spaces intact.
+		// That was a footgun for shell pipelines where the operator
+		// copy-pastes (or pipes) a password with stray whitespace on
+		// the end — the resulting wrong-but-non-empty password was
+		// silently written to disk and only surfaced as a 401 on the
+		// next agentpkg command. Trim the full set of common
+		// whitespace characters now. If a password genuinely ends in a
+		// space, the operator must use --password directly.
+		data = bytes.TrimRight(data, "\r\n\t ")
 		if len(data) == 0 {
 			return "", fmt.Errorf("empty password from stdin")
 		}
 		return string(data), nil
 	case file != "":
+		// F008 (tested 2026-09-30): the previous version accepted any
+		// file mode, including 0664 / 0644 / world-readable, even
+		// though the --password-file help text said "chmod 0600". An
+		// operator who skipped the chmod wrote a world-readable
+		// password into ~/.config/agentpkg/credentials. Refuse
+		// anything looser than 0600 (or 0400, owner-only-read) up
+		// front. Group and other bits must both be zero.
+		info, err := os.Stat(file)
+		if err != nil {
+			return "", fmt.Errorf("read password file: %w", err)
+		}
+		if perms := info.Mode().Perm(); perms&0o077 != 0 {
+			return "", fmt.Errorf("password file %s is mode %#o (must be 0600 or 0400 — group/other bits must be zero). chmod 0600 %s and retry", file, perms, file)
+		}
 		data, err := os.ReadFile(file)
 		if err != nil {
 			return "", fmt.Errorf("read password file: %w", err)
 		}
-		for len(data) > 0 && (data[len(data)-1] == '\n' || data[len(data)-1] == '\r') {
-			data = data[:len(data)-1]
-		}
+		data = bytes.TrimRight(data, "\r\n\t ")
 		if len(data) == 0 {
 			return "", fmt.Errorf("empty password from file")
 		}
@@ -246,6 +288,19 @@ func readPassword(password string, stdin bool, file string) (string, error) {
 		}
 		return string(data), nil
 	}
+}
+
+// isHTTPS reports whether the given URL has the https:// scheme. Used by
+// the --skip-cert-verify warning path (F006) to suppress the warning for
+// plaintext http:// servers where TLS is not in play. Falls back to false
+// on parse errors — a malformed URL is going to fail elsewhere anyway,
+// and we don't want a warning that points at a URL we can't even parse.
+func isHTTPS(rawURL string) bool {
+	u, err := url.Parse(rawURL)
+	if err != nil {
+		return false
+	}
+	return strings.EqualFold(u.Scheme, "https")
 }
 
 // readSecret reads a password without echoing it.

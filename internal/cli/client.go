@@ -36,7 +36,13 @@ func NewClient(configPath, credsPath string) (*Client, error) {
 	if err != nil {
 		return nil, err
 	}
-	if cfg.SkipCertVerify {
+	// F006 (tested 2026-09-30): suppress the TLS warning for
+	// plaintext http:// URLs — TLS is not in play there and the
+	// "connections will not be authenticated" message is misleading
+	// noise on every subsequent whoami/index/install call. Same
+	// gating as doLogin's login-time warning so behavior is
+	// consistent across both prompts.
+	if cfg.SkipCertVerify && isHTTPS(cfg.Server) {
 		fmt.Fprintf(os.Stderr,
 			"WARN: TLS certificate verification is disabled (--skip-cert-verify from login) — connections to %s are not authenticated\n",
 			cfg.Server)

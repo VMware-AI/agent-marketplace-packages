@@ -269,7 +269,21 @@ func runInstall(c *Client, name string, s *installShared, isUpgrade bool) error 
 		targetRoot = filepath.Join(userHomeOrTmp(), ".local")
 	}
 	if err := runInstallScript(cachePath, targetRoot, version, isUpgrade); err != nil {
-		return err
+		// F015 (tested 2026-09-30): install.sh's "already installed"
+		// path exits 10 (a documented semantic — see docs/install-
+		// protocol.md / hermes-agent's install.sh line 137) and prints
+		// "version X (source) already installed — exit 10". The previous
+		// runInstall swallowed that code and bubbled up a generic
+		// error, so the agentpkg binary exited 1 while the message said
+		// "exit 10" — orchestrators couldn't reliably distinguish
+		// "duplicate install" from a real failure. We now propagate
+		// the script's exit code as the process exit code via
+		// ExitErrorf, so the message and $? agree.
+		//
+		// The render-config.sh exit-code path (config.go) already does
+		// this with os.Exit + mapRenderExitToCLI; install was the
+		// missing sibling.
+		return wrapInstallScriptExit(err, name, version)
 	}
 
 	// Post-install: read manifest, write systemd units, augment state.json.
@@ -1097,6 +1111,34 @@ func extractManifestBytesFromTarball(tarballPath, version string) ([]byte, error
 		}
 	}
 	return nil, fmt.Errorf("manifest.json not found in tarball (tried: %v)", candidates)
+}
+
+// wrapInstallScriptExit propagates install.sh's exit code as the
+// agentpkg process exit code. Background: F015 (tested 2026-09-30)
+// — install.sh exits 10 for "already installed" (see hermes-agent's
+// install.sh line 137 and docs/install-protocol.md), but the previous
+// agentpkg wrapped everything in a generic error and exited 1. So
+// the message said "exit 10" but $? was 1. Orchestrators couldn't
+// branch on the code. The fix: detect *exec.ExitError, pull the
+// script's exit code, and re-emit as an ExitCoder error so main.go's
+// errors.As path translates it via os.Exit.
+//
+// Non-ExitError errors (e.g. tar extraction failure) pass through
+// unchanged — they don't have a script exit code to propagate.
+//
+// Exposed as a free function so the wrap behavior is unit-testable
+// without standing up a tarball + install.sh fixture.
+func wrapInstallScriptExit(err error, name, version string) error {
+	if err == nil {
+		return nil
+	}
+	exitErr, ok := err.(*exec.ExitError)
+	if !ok {
+		return err
+	}
+	scriptExit := exitErr.ExitCode()
+	return ExitErrorf(scriptExit, "install.sh for %s %s exited %d: %s",
+		name, version, scriptExit, strings.TrimSpace(err.Error()))
 }
 
 // runInstallScript extracts the tarball into a temp dir and runs install.sh.
