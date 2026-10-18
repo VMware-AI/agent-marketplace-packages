@@ -1,0 +1,322 @@
+{
+  "agent": "opencode",
+  "channel": "stable",
+  "checksums": {
+    "install.sh": "sha256:512d6b55a1b09ff5bdb8aca892984d5830ecd28585f1a2250dd376c771ff6825",
+    "payload/bin/opencode": "sha256:135ac3f86c43f2a22328a3554fec5f0bc57d71576077902661bc38dac34871fd",
+    "uninstall.sh": "sha256:a2dad322382bb5cfcbbf9c88380c09a980e1f198f26e30eaac99176124db5da5"
+  },
+  "configs": [
+    {
+      "file": "opencode.json",
+      "mode": "0600",
+      "name": "opencode",
+      "optional_inputs": {
+        "OPENCODE_AGENT": {
+          "json_path": "agent",
+          "type": "json_object"
+        },
+        "OPENCODE_AUTOUPDATE": {
+          "enum_values": [
+            "true",
+            "false",
+            "notify"
+          ],
+          "json_path": "autoupdate",
+          "type": "opencode_autoupdate"
+        },
+        "OPENCODE_DEFAULT_AGENT": {
+          "json_path": "default_agent",
+          "type": "string"
+        },
+        "OPENCODE_DISABLED_PROVIDERS": {
+          "json_path": "disabled_providers",
+          "type": "json_array"
+        },
+        "OPENCODE_ENABLED_PROVIDERS": {
+          "json_path": "enabled_providers",
+          "type": "json_array"
+        },
+        "OPENCODE_FORMATTER": {
+          "json_path": "formatter",
+          "type": "json_object"
+        },
+        "OPENCODE_INSTRUCTIONS": {
+          "json_path": "instructions",
+          "type": "json_array"
+        },
+        "OPENCODE_LOG_LEVEL": {
+          "enum_values": [
+            "DEBUG",
+            "INFO",
+            "WARN",
+            "ERROR"
+          ],
+          "json_path": "logLevel",
+          "type": "enum"
+        },
+        "OPENCODE_LSP": {
+          "json_path": "lsp",
+          "type": "json_object"
+        },
+        "OPENCODE_MCP": {
+          "json_path": "mcp",
+          "type": "json_object"
+        },
+        "OPENCODE_MODEL": {
+          "json_path": "model",
+          "type": "string"
+        },
+        "OPENCODE_PERMISSION": {
+          "json_path": "permission",
+          "type": "json_object"
+        },
+        "OPENCODE_PLUGIN": {
+          "json_path": "plugin",
+          "type": "json_array"
+        },
+        "OPENCODE_PROVIDER_BASE_URL": {
+          "json_path": "provider.<name>.options.baseURL",
+          "required_when": "custom_provider",
+          "type": "string"
+        },
+        "OPENCODE_PROVIDER_NPM": {
+          "json_path": "provider.<name>.npm",
+          "required_when": "custom_provider",
+          "type": "string"
+        },
+        "OPENCODE_SERVER_CORS": {
+          "json_path": "server.cors",
+          "type": "json_array"
+        },
+        "OPENCODE_SERVER_HOSTNAME": {
+          "json_path": "server.hostname",
+          "type": "string"
+        },
+        "OPENCODE_SERVER_MDNS": {
+          "json_path": "server.mdns",
+          "type": "boolean"
+        },
+        "OPENCODE_SERVER_MDNS_DOMAIN": {
+          "json_path": "server.mdnsDomain",
+          "type": "string"
+        },
+        "OPENCODE_SERVER_PORT": {
+          "json_path": "server.port",
+          "type": "integer"
+        },
+        "OPENCODE_SHARE": {
+          "enum_values": [
+            "manual",
+            "auto",
+            "disabled"
+          ],
+          "json_path": "share",
+          "type": "enum"
+        },
+        "OPENCODE_SHELL": {
+          "json_path": "shell",
+          "type": "string"
+        },
+        "OPENCODE_SKILLS": {
+          "json_path": "skills",
+          "type": "json_object"
+        },
+        "OPENCODE_SMALL_MODEL": {
+          "json_path": "small_model",
+          "type": "string"
+        },
+        "OPENCODE_SNAPSHOT": {
+          "json_path": "snapshot",
+          "type": "boolean"
+        },
+        "OPENCODE_SUBAGENT_DEPTH": {
+          "json_path": "subagent_depth",
+          "type": "integer"
+        },
+        "OPENCODE_USERNAME": {
+          "json_path": "username",
+          "type": "string"
+        },
+        "OPENCODE_WATCHER": {
+          "json_path": "watcher",
+          "type": "json_object"
+        }
+      },
+      "render_to": "~/.config/opencode/opencode.json",
+      "required_inputs": [
+        {
+          "input_key": "OPENCODE_PROVIDER",
+          "json_path": "provider",
+          "type": "provider",
+          "validate": "in_supported_providers_or_custom"
+        },
+        {
+          "dynamic_resolve": "from_opencode_provider",
+          "input_key": "<PROVIDER>_API_KEY",
+          "json_path": "provider.<name>.options.apiKey",
+          "type": "secret_string"
+        }
+      ],
+      "supported_providers": {
+        "builtin": [
+          {
+            "api_key_env": "ANTHROPIC_API_KEY",
+            "id": "anthropic"
+          },
+          {
+            "api_key_env": "OPENAI_API_KEY",
+            "id": "openai"
+          },
+          {
+            "api_key_env": "GOOGLE_API_KEY",
+            "id": "google"
+          },
+          {
+            "api_key_env": "AWS_ACCESS_KEY_ID",
+            "id": "bedrock",
+            "notes": "Uses AWS credential chain"
+          },
+          {
+            "api_key_env": null,
+            "id": "ollama",
+            "notes": "Local; requires OPENCODE_PROVIDER_BASE_URL"
+          },
+          {
+            "api_key_env": "XAI_API_KEY",
+            "id": "xai"
+          },
+          {
+            "api_key_env": "GROQ_API_KEY",
+            "id": "groq"
+          },
+          {
+            "api_key_env": "OPENROUTER_API_KEY",
+            "id": "openrouter"
+          },
+          {
+            "api_key_env": "AZURE_API_KEY",
+            "id": "azure"
+          },
+          {
+            "api_key_env": "GITHUB_TOKEN",
+            "id": "github-copilot"
+          },
+          {
+            "api_key_env": "MISTRAL_API_KEY",
+            "id": "mistral"
+          },
+          {
+            "api_key_env": "DEEPSEEK_API_KEY",
+            "id": "deepseek"
+          },
+          {
+            "api_key_env": "COHERE_API_KEY",
+            "id": "cohere"
+          }
+        ],
+        "custom": {
+          "description": "OpenAI-compatible custom providers. Requires OPENCODE_PROVIDER_NPM and OPENCODE_PROVIDER_BASE_URL.",
+          "npm_default": "@ai-sdk/openai-compatible"
+        }
+      }
+    }
+  ],
+  "fork_of": null,
+  "payload": [
+    {
+      "dst": "{{TARGET_ROOT}}/opencode/1.19.0/bin/opencode",
+      "mode": "0755",
+      "src": "payload/bin/opencode"
+    }
+  ],
+  "released_at": "2026-10-11",
+  "requires": {
+    "arch": [
+      "x86_64"
+    ],
+    "os": [
+      "linux"
+    ],
+    "system_packages": [],
+    "system_tools": [
+      "tar",
+      "gzip",
+      "sha256sum",
+      "bash",
+      "coreutils",
+      "grep",
+      "sed",
+      "awk",
+      "findutils",
+      "jq"
+    ]
+  },
+  "runtime": [],
+  "schema_version": "1.1",
+  "scripts": {
+    "install": "install.sh",
+    "uninstall": "uninstall.sh"
+  },
+  "services": [
+    {
+      "command": [
+        "opencode",
+        "web",
+        "--port",
+        "8080"
+      ],
+      "description": "opencode web UI (anomalyco/opencode v1.19.0), pinned to port 8080",
+      "name": "web",
+      "restart": "on-failure",
+      "working_dir": "{{DEPLOY_ROOT}}"
+    }
+  ],
+  "source": "upstream",
+  "tarball": {
+    "filename": "opencode-upstream-1.19.0.tar.gz",
+    "sha256": "sha256:TBD",
+    "signature_type": "none"
+  },
+  "upgrade": {
+    "compatible_from": [
+      "1.18.9",
+      "1.18.8",
+      "1.18.7",
+      "1.18.6",
+      "1.18.5",
+      "1.18.4",
+      "1.18.3",
+      "1.18.2",
+      "1.18.1",
+      "1.18.0",
+      "0.0.55",
+      "0.0.54",
+      "0.0.53",
+      "0.0.52"
+    ],
+    "migrations": [
+      {
+        "from": "1.18.9",
+        "script": "migrate/from-1.18.9.sh"
+      },
+      {
+        "from": "1.18.x",
+        "script": "migrate/from-1.18.x.sh"
+      },
+      {
+        "from": "0.0.x",
+        "script": "migrate/from-0.0.x.sh"
+      }
+    ],
+    "strategy": "replace"
+  },
+  "upstream": {
+    "name": "opencode",
+    "notes": "Outer tarball was unpacked and discarded; only the extracted `opencode` binary is preserved as payload/bin/opencode.",
+    "sha256": "sha256:7bb9e61ad6feacf2e89c10a6a2c1840e3de4220bb50ba1fc7110f31806076aec",
+    "url": "https://github.com/anomalyco/opencode/releases/download/v1.19.0/opencode-linux-x64.tar.gz",
+    "version": "1.19.0"
+  },
+  "version": "1.19.0"
+}
