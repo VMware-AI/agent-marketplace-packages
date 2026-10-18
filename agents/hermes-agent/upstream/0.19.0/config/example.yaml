@@ -1,0 +1,61 @@
+# hermes-agent 0.19.0 — example config
+#
+# Two slots, two file formats:
+#
+#   1. `hermes`   → ~/.hermes/config.yaml   (YAML)
+#   2. `hermes-env` → ~/.hermes/.env         (KEY=VALUE env-var format)
+#
+# This file uses multi-document YAML (`---` separates the two slots). The
+# deploy wizard splits on `---` and routes each doc to its slot. The
+# `model.provider` in the `hermes` slot drives auto-injection of the
+# `<PROVIDER>_API_KEY` env-var line in `hermes-env` and the
+# `providers.<chosen>.api_key_env` value in `hermes`. The platform resolves
+# the bound virtual key at deploy time.
+#
+# Anything not declared in config/schema.json still passes through
+# (additionalProperties: true at every level). Use raw mode for fields the
+# schema doesn't know about.
+
+hermes:
+  model:
+    provider: openai
+    default: gpt-4o
+    context_length: 128000
+    max_tokens: 4096
+  providers:
+    openai:
+      api_key_env: ""        # auto-injected (x-secret-source: env_var_name)
+  agent:
+    max_turns: 50
+    api_max_retries: 3
+    reasoning_effort: medium
+    tool_use_enforcement: auto
+  memory:
+    memory_enabled: true
+    user_profile_enabled: true
+  compression:
+    enabled: true
+    threshold: 0.85
+    target_ratio: 0.5
+  streaming:
+    enabled: true
+  terminal:
+    backend: local
+    persistent_shell: true
+    timeout: 60
+  display:
+    language: en
+  privacy:
+    redact_pii: true
+  worktree: true
+---
+hermes-env:
+  HERMES_API_TIMEOUT: 60
+  HERMES_API_CALL_STALE_TIMEOUT: 120
+  HERMES_STREAM_READ_TIMEOUT: 300
+  HERMES_STREAM_STALE_TIMEOUT: 60
+  HERMES_LANGUAGE: en
+  HERMES_OPENROUTER_CACHE: false
+  HERMES_OPENROUTER_CACHE_TTL: 5m
+  HERMES_QUIET: false
+  HERMES_YOLO_MODE: false

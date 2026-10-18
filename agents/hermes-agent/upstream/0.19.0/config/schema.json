@@ -1,0 +1,281 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://agent-marketplace-packages/agents/hermes-agent/0.19.0/config/schema.json",
+  "title": "hermes-agent",
+  "description": "hermes-agent 0.19.0 — NousResearch Hermes agent (Python). This package has TWO slots: `hermes` renders to ~/.hermes/config.yaml (YAML) and `hermes-env` renders to ~/.hermes/.env (KEY=VALUE format). The `hermes-env` slot's `<PROVIDER>_API_KEY` line is a special dynamic env-var (auto-injected as the env-var name that the chosen provider's bound virtual key is stored under).",
+  "type": "object",
+  "additionalProperties": true,
+  "properties": {
+    "hermes": {
+      "type": "object",
+      "description": "hermes main config block (YAML).",
+      "additionalProperties": true,
+      "required": ["model"],
+      "properties": {
+        "model": {
+          "type": "object",
+          "description": "Model configuration.",
+          "additionalProperties": true,
+          "properties": {
+            "provider": {
+              "type": "string",
+              "description": "AI provider id (e.g. 'anthropic', 'openai', 'google'). The form renders this as a select driven by `x-provider-choices` (server-stamped from manifest.configs[].supported_providers).",
+              "x-provider-choices-source": "hermes"
+            },
+            "default": {
+              "type": "string",
+              "description": "Default model id (e.g. 'claude-sonnet-4-5', 'gpt-4o')."
+            },
+            "base_url": {
+              "type": "string",
+              "description": "Override base URL for the provider (e.g. for a LiteLLM proxy).",
+              "format": "uri"
+            },
+            "context_length": {
+              "type": "integer",
+              "minimum": 1,
+              "description": "Override the model's context length (tokens)."
+            },
+            "max_tokens": {
+              "type": "integer",
+              "minimum": 1,
+              "description": "Override the model's max output tokens."
+            }
+          }
+        },
+        "providers": {
+          "type": "object",
+          "description": "Per-provider config. Map keyed by provider id. The chosen provider's entry is auto-populated by the platform.",
+          "minProperties": 0,
+          "additionalProperties": {
+            "type": "object",
+            "additionalProperties": true,
+            "properties": {
+              "api_key_env": {
+                "type": "string",
+                "description": "Name of the env var that holds the provider's API key (e.g. 'OPENAI_API_KEY'). Auto-injected as the env-var name for the chosen provider's bound virtual key — leave empty.",
+                "x-secret-source": "env_var_name"
+              },
+              "base_url": {
+                "type": "string",
+                "description": "Per-provider base URL override.",
+                "format": "uri"
+              },
+              "npm": {
+                "type": "string",
+                "description": "NPM package for custom OpenAI-compatible providers."
+              }
+            }
+          }
+        },
+        "agent": {
+          "type": "object",
+          "description": "Agent runtime settings.",
+          "additionalProperties": true,
+          "properties": {
+            "max_turns": {
+              "type": "integer",
+              "minimum": 1,
+              "description": "Maximum conversation turns per session."
+            },
+            "api_max_retries": {
+              "type": "integer",
+              "minimum": 0,
+              "description": "Max retries on transient API errors."
+            },
+            "reasoning_effort": {
+              "type": "string",
+              "enum": ["none", "minimal", "low", "medium", "high", "xhigh", "max", "ultra"],
+              "description": "Reasoning effort hint passed to the model."
+            },
+            "tool_use_enforcement": {
+              "type": "string",
+              "enum": ["auto", "true", "false"],
+              "description": "Whether the model must use tools. `auto` lets the model decide."
+            }
+          }
+        },
+        "memory": {
+          "type": "object",
+          "description": "Persistent memory settings.",
+          "additionalProperties": true,
+          "properties": {
+            "memory_enabled": {
+              "type": "boolean",
+              "description": "Enable cross-session memory."
+            },
+            "user_profile_enabled": {
+              "type": "boolean",
+              "description": "Enable user-profile memory (remembers preferences)."
+            }
+          }
+        },
+        "compression": {
+          "type": "object",
+          "description": "Context compression settings (summarizes old turns when context fills up).",
+          "additionalProperties": true,
+          "properties": {
+            "enabled": {
+              "type": "boolean",
+              "description": "Enable context compression."
+            },
+            "threshold": {
+              "type": "number",
+              "minimum": 0,
+              "maximum": 1,
+              "description": "Trigger compression when context fills this fraction (0-1)."
+            },
+            "target_ratio": {
+              "type": "number",
+              "minimum": 0,
+              "maximum": 1,
+              "description": "Compress to this fraction of the threshold."
+            }
+          }
+        },
+        "auxiliary": {
+          "type": "object",
+          "description": "Auxiliary model settings (separate from the primary model).",
+          "additionalProperties": true,
+          "properties": {
+            "compression": {
+              "type": "object",
+              "additionalProperties": true,
+              "properties": {
+                "provider": { "type": "string" },
+                "model": { "type": "string" },
+                "base_url": { "type": "string", "format": "uri" }
+              }
+            },
+            "vision": {
+              "type": "object",
+              "additionalProperties": true,
+              "properties": {
+                "provider": { "type": "string" },
+                "model": { "type": "string" },
+                "base_url": { "type": "string", "format": "uri" }
+              }
+            }
+          }
+        },
+        "stt": {
+          "type": "object",
+          "description": "Speech-to-text settings.",
+          "additionalProperties": true,
+          "properties": {
+            "provider": {
+              "type": "string",
+              "enum": ["local", "groq", "openai", "mistral"],
+              "description": "STT provider."
+            }
+          }
+        },
+        "tts": {
+          "type": "object",
+          "description": "Text-to-speech settings.",
+          "additionalProperties": true,
+          "properties": {
+            "provider": {
+              "type": "string",
+              "enum": ["edge", "elevenlabs", "openai", "minimax", "mistral", "gemini", "xai", "neutts"],
+              "description": "TTS provider."
+            }
+          }
+        },
+        "streaming": {
+          "type": "object",
+          "description": "Streaming response settings.",
+          "additionalProperties": true,
+          "properties": {
+            "enabled": { "type": "boolean" }
+          }
+        },
+        "terminal": {
+          "type": "object",
+          "description": "Terminal / shell-execution backend settings.",
+          "additionalProperties": true,
+          "properties": {
+            "backend": {
+              "type": "string",
+              "enum": ["local", "docker", "ssh", "modal", "daytona", "singularity"],
+              "description": "Terminal execution backend. `local` runs in the same VM; `docker` / `ssh` isolate."
+            },
+            "persistent_shell": { "type": "boolean" },
+            "timeout": { "type": "integer", "minimum": 1 }
+          }
+        },
+        "display": {
+          "type": "object",
+          "additionalProperties": true,
+          "properties": {
+            "language": {
+              "type": "string",
+              "description": "UI display language (BCP-47, e.g. 'en', 'zh-CN')."
+            }
+          }
+        },
+        "privacy": {
+          "type": "object",
+          "additionalProperties": true,
+          "properties": {
+            "redact_pii": {
+              "type": "boolean",
+              "description": "Redact PII (emails, phone numbers) before sending to the model."
+            }
+          }
+        },
+        "worktree": {
+          "type": "boolean",
+          "description": "Use git worktrees for code edits (lets multiple sessions work in parallel)."
+        }
+      }
+    },
+    "hermes-env": {
+      "type": "object",
+      "description": "hermes environment-vars file (rendered as KEY=VALUE lines in ~/.hermes/.env). The dynamic `<PROVIDER>_API_KEY` line is auto-injected by the platform based on the chosen provider in the `hermes` slot.",
+      "additionalProperties": true,
+      "properties": {
+        "HERMES_API_TIMEOUT": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "Default API request timeout (seconds)."
+        },
+        "HERMES_API_CALL_STALE_TIMEOUT": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "Time after which an in-flight call is considered stale (seconds)."
+        },
+        "HERMES_STREAM_READ_TIMEOUT": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "Streaming read timeout (seconds)."
+        },
+        "HERMES_STREAM_STALE_TIMEOUT": {
+          "type": "integer",
+          "minimum": 1,
+          "description": "Streaming staleness timeout (seconds)."
+        },
+        "HERMES_LANGUAGE": {
+          "type": "string",
+          "description": "Default response language (BCP-47)."
+        },
+        "HERMES_OPENROUTER_CACHE": {
+          "type": "boolean",
+          "description": "Enable OpenRouter response caching."
+        },
+        "HERMES_OPENROUTER_CACHE_TTL": {
+          "type": "string",
+          "description": "OpenRouter cache TTL (e.g. '5m', '1h')."
+        },
+        "HERMES_QUIET": {
+          "type": "boolean",
+          "description": "Suppress non-essential output."
+        },
+        "HERMES_YOLO_MODE": {
+          "type": "boolean",
+          "description": "Skip all safety confirmations (use with caution)."
+        }
+      }
+    }
+  }
+}
