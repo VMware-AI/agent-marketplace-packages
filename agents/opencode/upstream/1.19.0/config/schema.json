@@ -1,0 +1,181 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://agent-marketplace-packages/agents/opencode/1.19.0/config/schema.json",
+  "title": "opencode",
+  "description": "opencode 1.19.0 — web UI for AI agent tasks (anomalyco/opencode). Renders to ~/.config/opencode/opencode.json (mode 0600). The `opencode` slot is the single config block; values in this block are written verbatim by the in-VM render-config.sh.",
+  "type": "object",
+  "additionalProperties": true,
+  "properties": {
+    "opencode": {
+      "type": "object",
+      "description": "opencode config block. `provider` is a map keyed by provider id (the chosen id from supported_providers.builtin + 'custom'); the chosen provider's options (apiKey, baseURL) are nested under provider.<chosen>.",
+      "additionalProperties": true,
+      "required": ["provider"],
+      "properties": {
+        "provider": {
+          "type": "object",
+          "description": "Provider map. Each key is a provider id; the chosen provider's block is the one whose `options.apiKey` is bound to the user's virtual key at deploy time. The form renders this as a 'pick provider + fill options' widget driven by `x-provider-choices` (server-stamped from manifest.configs[].supported_providers).",
+          "minProperties": 1,
+          "additionalProperties": {
+            "type": "object",
+            "additionalProperties": true,
+            "properties": {
+              "npm": {
+                "type": "string",
+                "description": "NPM package name for the provider's SDK. Required for `custom` (OpenAI-compatible) providers."
+              },
+              "options": {
+                "type": "object",
+                "description": "Provider-specific options. `apiKey` is auto-injected from the user's bound virtual key — leave empty in the form; the deploy service substitutes the real key.",
+                "additionalProperties": true,
+                "properties": {
+                  "apiKey": {
+                    "type": "string",
+                    "format": "password",
+                    "description": "API key for the provider. Marked `x-secret-source: virtual_key` so the deploy service auto-injects from the bound virtual key — do not paste a real key here.",
+                    "x-secret-source": "virtual_key"
+                  },
+                  "baseURL": {
+                    "type": "string",
+                    "description": "Base URL for OpenAI-compatible custom providers (e.g. ollama, vLLM, LiteLLM proxy).",
+                    "format": "uri"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "model": {
+          "type": "string",
+          "description": "Primary model id (e.g. 'gpt-4o', 'claude-sonnet-4-5'). Provider-specific; consult your provider's model list."
+        },
+        "small_model": {
+          "type": "string",
+          "description": "Smaller / faster model used for lightweight tasks (title generation, summarization, etc.)."
+        },
+        "default_agent": {
+          "type": "string",
+          "description": "Default agent name (matches an entry under `agent.<name>`)."
+        },
+        "username": {
+          "type": "string",
+          "description": "Display name shown in the opencode UI."
+        },
+        "autoupdate": {
+          "type": "string",
+          "enum": ["true", "false", "notify"],
+          "description": "Auto-update behavior. `notify` shows a banner; `true` updates silently; `false` disables."
+        },
+        "share": {
+          "type": "string",
+          "enum": ["manual", "auto", "disabled"],
+          "description": "Session sharing mode."
+        },
+        "logLevel": {
+          "type": "string",
+          "enum": ["DEBUG", "INFO", "WARN", "ERROR"],
+          "description": "Server log verbosity."
+        },
+        "snapshot": {
+          "type": "boolean",
+          "description": "Enable session snapshots (allows reverting the workspace state)."
+        },
+        "subagent_depth": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 10,
+          "description": "Maximum nesting depth for sub-agents. 0 disables sub-agents."
+        },
+        "instructions": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "Additional system instructions appended to the default prompt."
+        },
+        "disabled_providers": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "Provider ids to hide from the opencode UI."
+        },
+        "enabled_providers": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "Provider ids to show in the opencode UI. Empty = all enabled."
+        },
+        "permission": {
+          "type": "object",
+          "description": "Tool permission rules. Free-form; consult opencode docs for the schema.",
+          "additionalProperties": true
+        },
+        "agent": {
+          "type": "object",
+          "description": "Named agent configurations (model + system prompt). Free-form; consult opencode docs for the schema.",
+          "additionalProperties": true
+        },
+        "formatter": {
+          "type": "object",
+          "description": "Code formatter overrides. Free-form.",
+          "additionalProperties": true
+        },
+        "lsp": {
+          "type": "object",
+          "description": "LSP server overrides. Free-form.",
+          "additionalProperties": true
+        },
+        "mcp": {
+          "type": "object",
+          "description": "MCP server configurations. Free-form.",
+          "additionalProperties": true
+        },
+        "plugin": {
+          "type": "array",
+          "description": "Plugin specifications. Free-form.",
+          "additionalProperties": true
+        },
+        "shell": {
+          "type": "string",
+          "description": "Shell binary used for command execution (e.g. '/bin/bash')."
+        },
+        "skills": {
+          "type": "object",
+          "description": "Skill enable/disable map. Free-form.",
+          "additionalProperties": true
+        },
+        "watcher": {
+          "type": "object",
+          "description": "File watcher settings. Free-form.",
+          "additionalProperties": true
+        },
+        "server": {
+          "type": "object",
+          "description": "opencode web server settings.",
+          "additionalProperties": true,
+          "properties": {
+            "port": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 65535,
+              "description": "TCP port the web server binds to (default 8080)."
+            },
+            "hostname": {
+              "type": "string",
+              "description": "Bind hostname (default 127.0.0.1). Use 0.0.0.0 to expose on all interfaces."
+            },
+            "cors": {
+              "type": "array",
+              "items": { "type": "string" },
+              "description": "Origins allowed by CORS (e.g. ['https://app.example.com'])."
+            },
+            "mdns": {
+              "type": "boolean",
+              "description": "Advertise the server over mDNS for local discovery."
+            },
+            "mdnsDomain": {
+              "type": "string",
+              "description": "mDNS domain (default 'opencode.local')."
+            }
+          }
+        }
+      }
+    }
+  }
+}
