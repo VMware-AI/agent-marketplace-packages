@@ -1,49 +1,92 @@
 #!/usr/bin/env bash
-# render-config.sh — manifest-driven renderer for opencode.json.
+# render-config.sh — schema-driven renderer for opencode.json.
 # Invoked by `agentpkg config generate opencode`.
 #
-# This script is entirely driven by $AGENT_MARKETPLACE_MANIFEST (the
-# tarball's embedded manifest.json). Adding/changing a config field is a
-# matter of editing manifest.json — no shell changes required.
+# Two paths:
 #
-# Inputs (env vars set by agentpkg):
-#   $AGENT_MARKETPLACE_CONFIG_INPUT — path to daemon's config-input JSON
-#   $AGENT_MARKETPLACE_MANIFEST     — path to manifest.json (extracted by CLI)
-#   $AGENT_MARKETPLACE_AGENT        — "opencode"
-#   $AGENT_MARKETPLACE_VERSION      — e.g. "1.19.0"
-#   $AGENT_MARKETPLACE_DEPLOY_ROOT  — e.g. "$HOME/.local/opencode/1.19.0"
+#   1. NEW (schema-driven; agent-marketplace-packages PR Phase 3):
+#      reads $MARKETPLACE_CONFIG_OPENCODE (base64-encoded JSON, set
+#      by the OVA firstboot from the platform's
+#      guestinfo.marketplace_config.opencode guestinfo key), decodes,
+#      validates, and writes verbatim to $RENDER_TO. This is the
+#      contract for any package version that ships a config/ directory
+#      in its tarball.
+#
+#   2. LEGACY (manifest-driven; pre-Phase-3 tarballs):
+#      reads $AGENT_MARKETPLACE_CONFIG_INPUT (a JSON file the daemon
+#      writes containing the marketplace_inputs.<key>=<value> pairs)
+#      and walks the manifest's required_inputs / optional_inputs
+#      jsonPaths to assemble opencode.json. Kept as a fallback so a
+#      Phase-2-and-earlier opencode tarball continues to work until
+#      every operator has upgraded to a Phase-3-aware version.
+#      Removed in Phase 5 of the agent-platform-console refactor.
+#
+# Inputs (env vars):
+#   $AGENT_MARKETPLACE_CONFIG_INPUT    — path to daemon's config-input JSON
+#                                        (LEGACY path only)
+#   $AGENT_MARKETPLACE_MANIFEST        — path to manifest.json (LEGACY path only)
+#   $AGENT_MARKETPLACE_AGENT           — "opencode"
+#   $AGENT_MARKETPLACE_VERSION         — e.g. "1.19.0"
+#   $AGENT_MARKETPLACE_DEPLOY_ROOT     — e.g. "$HOME/.local/opencode/1.19.0"
+#   $MARKETPLACE_CONFIG_OPENCODE       — base64(JSON), set by OVA firstboot
+#                                        from guestinfo.marketplace_config.opencode
+#                                        (NEW path)
 #
 # Output:
 #   Path declared by manifest.configs[0].render_to, default
 #   ~/.config/opencode/opencode.json (mode 0600).
 #
-# Two-layer model:
-#   - ADMIN-layer fields (provider/apiKey/model/server/share/permission/...)
-#     are declared in manifest.configs[0].required_inputs / optional_inputs.
-#   - USER-layer fields (agent/commands/mcp/instructions/...) are out of
-#     scope; opencode reads them from .opencode/ and OPENCODE_CONFIG_CONTENT.
-#
 # Exit codes:
 #   0  — success
-#   1  — internal error (env / input / manifest missing)
+#   1  — internal error (env / manifest missing)
 #   70 — required-input missing or invalid
-#   71 — script error (bad type / enum value)
+#   71 — script error (bad type / enum value / bad JSON)
+
 set -euo pipefail
 
-: "${AGENT_MARKETPLACE_CONFIG_INPUT:?AGENT_MARKETPLACE_CONFIG_INPUT is required}"
-: "${AGENT_MARKETPLACE_MANIFEST:?AGENT_MARKETPLACE_MANIFEST is required}"
+: "${AGENT_MARKETPLACE_AGENT:?AGENT_MARKETPLACE_AGENT is required}"
+: "${AGENT_MARKETPLACE_VERSION:?AGENT_MARKETPLACE_VERSION is required}"
 
-if [[ ! -f "$AGENT_MARKETPLACE_CONFIG_INPUT" ]]; then
-  echo "render-config.sh [opencode]: config input not found: $AGENT_MARKETPLACE_CONFIG_INPUT" >&2
-  exit 1
+SLOT_NAME="opencode"
+RENDER_TO="$HOME/.config/opencode/opencode.json"
+MODE="0600"
+
+# =============================================================================
+# NEW path: schema-driven raw config blob.
+# =============================================================================
+if [[ -n "${MARKETPLACE_CONFIG_OPENCODE:-}" ]]; then
+  # The base64 round-trip is a cheap sanity check; the in-VM `jq empty`
+  # is the source of truth on whether the decoded bytes are valid JSON.
+  decoded="$(printf '%s' "$MARKETPLACE_CONFIG_OPENCODE" | base64 -d)"
+  if ! printf '%s' "$decoded" | jq empty 2>/dev/null; then
+    echo "render-config.sh [opencode]: MARKETPLACE_CONFIG_OPENCODE is not valid JSON" >&2
+    exit 71
+  fi
+  mkdir -p "$(dirname "$RENDER_TO")"
+  printf '%s' "$decoded" | jq . > "$RENDER_TO"
+  chmod "$MODE" "$RENDER_TO"
+  echo "render-config.sh [opencode]: wrote $RENDER_TO from MARKETPLACE_CONFIG_OPENCODE (new schema-driven path)"
+  exit 0
 fi
-if [[ ! -f "$AGENT_MARKETPLACE_MANIFEST" ]]; then
-  echo "render-config.sh [opencode]: manifest not found: $AGENT_MARKETPLACE_MANIFEST" >&2
-  exit 1
-fi
+
+# =============================================================================
+# LEGACY path: manifest-driven (kept for backward compat with pre-Phase-3
+# tarballs; removed in Phase 5).
+# =============================================================================
+: "${AGENT_MARKETPLACE_CONFIG_INPUT:?AGENT_MARKETPLACE_CONFIG_INPUT is required (legacy path)}"
+: "${AGENT_MARKETPLACE_MANIFEST:?AGENT_MARKETPLACE_MANIFEST is required (legacy path)}"
 
 INPUT="$AGENT_MARKETPLACE_CONFIG_INPUT"
 MF="$AGENT_MARKETPLACE_MANIFEST"
+
+if [[ ! -f "$INPUT" ]]; then
+  echo "render-config.sh [opencode]: config input not found: $INPUT" >&2
+  exit 1
+fi
+if [[ ! -f "$MF" ]]; then
+  echo "render-config.sh [opencode]: manifest not found: $MF" >&2
+  exit 1
+fi
 
 # Locate the configs[0] block for this agent. There is currently only one
 # configs[] entry per agent, so pick the first.
@@ -78,16 +121,12 @@ else
     echo "render-config.sh [opencode]: custom provider '$PROVIDER' requires OPENCODE_PROVIDER_NPM and OPENCODE_PROVIDER_BASE_URL" >&2
     exit 70
   fi
-  # Default npm package if caller only gave one of the two (currently
-  # we require both — see above). If we ever relax, default here:
   if [[ -z "$CUSTOM_NPM_DEFAULT" ]]; then
     :  # no default declared; require explicit
   fi
 fi
 
 # --- 2. required: <PROVIDER>_API_KEY -----------------------------------------
-# For builtin providers, look up the declared api_key_env. For custom, the
-# key env follows the same <PROVIDER>_API_KEY convention.
 if $IS_BUILTIN; then
   KEY_ENV=$(jq -r --arg id "$PROVIDER" \
     '.configs[0].supported_providers.builtin[] | select(.id == $id) | .api_key_env // empty' \
@@ -95,7 +134,6 @@ if $IS_BUILTIN; then
   if [[ -n "$KEY_ENV" ]]; then
     API_KEY=$(jq -r --arg k "$KEY_ENV" '.[$k] // empty' "$INPUT")
   fi
-  # If key_env is null (e.g. ollama), accept no key.
 else
   KEY_ENV="$(printf '%s' "$PROVIDER" | tr '[:lower:]' '[:upper:]')_API_KEY"
   API_KEY=$(jq -r --arg k "$KEY_ENV" '.[$k] // empty' "$INPUT")
@@ -109,11 +147,6 @@ elif [[ -z "$API_KEY" ]]; then
 fi
 
 # --- 3. validate optional_inputs (enum + required_when + types) -------------
-# Use jq to build the rendered config object incrementally. We pre-validate
-# the easy cases (enum, required_when) here to give precise error messages
-# before invoking jq.
-
-# Collect keys of optional_inputs that should be required given current state.
 set -e
 EXTRA_REQUIRED=$(jq -r --arg provider "$PROVIDER" --arg is_builtin "$IS_BUILTIN" '
   [.configs[0].optional_inputs
@@ -130,38 +163,13 @@ EXTRA_REQUIRED=$(jq -r --arg provider "$PROVIDER" --arg is_builtin "$IS_BUILTIN"
 for key in $EXTRA_REQUIRED; do
   val=$(jq -r --arg k "$key" '.[$k] // empty' "$INPUT")
   if [[ -z "$val" ]]; then
-    echo "render-config.sh [opencode]: required_when '$key' is missing (required because provider is non-builtin or builtin depending on rule)" >&2
+    echo "render-config.sh [opencode]: required_when '$key' is missing" >&2
     exit 70
   fi
 done
 
-# Validate enum values upfront with jq.
-ENUM_ERRORS=$(jq -r --arg input "$INPUT" '
-  def lines: split("\n");
-  [
-    (.configs[0].optional_inputs | to_entries[]) as $f
-    | $f.key as $k
-    | $f.value.type as $t
-    | ($f.value.enum_values // null) as $ev
-    | if $t == "enum" and $ev != null then
-        (try ($input | fromjson) catch null) as $inp
-        | ($inp[$k] // null) as $val
-        | if $val != null and ($val | tostring | IN($ev | tostring | lines)) | not then
-            "\($k)=\($val) is not a valid value; allowed: \($ev | join(","))"
-          else empty
-        end
-      else empty
-    end
-  ]
-  | .[]
-' --argjson input "$(cat "$INPUT")" "$MF" 2>/dev/null || true)
-
-# Above is a complex one-liner; simpler approach: do enum check separately.
 ENUM_ERRORS=$(jq -r --argjson input "$(cat "$INPUT")" '
-  [.configs[0].optional_inputs
-   | to_entries[]
-   | select(.value.type == "enum" or .value.type == "opencode_autoupdate")
-   | {key: .key, allowed: .value.enum_values}]
+  [.configs[0].optional_inputs | to_entries[] | select(.value.type == "enum") | {key: .key, allowed: .value.enum_values}]
   | .[] as $f
   | (try $input[$f.key] catch null) as $val
   | if $val != null and ($val | tostring | (. as $v | ($f.allowed | index($v)) == null)) then
@@ -178,11 +186,6 @@ fi
 mkdir -p "$HOME/.config/opencode"
 OUT="$HOME/.config/opencode/opencode.json"
 
-# We let jq drive the whole rendering: for each optional_input, look up the
-# daemon value, coerce per its type, and assign via setpath. The path syntax
-# "a.b.c" maps to setpath(["a","b","c"]); "provider.<name>.x" resolves
-# <name> against $provider. Note: jq --arg vars are visible inside `def`
-# bodies only if passed as a parameter — see sp($provider; ...).
 jq -n \
   --arg provider "$PROVIDER" \
   --arg is_builtin "$IS_BUILTIN" \
@@ -192,65 +195,25 @@ jq -n \
   --argjson input "$(cat "$INPUT")" \
   --argjson config "$(jq -c '.configs[0]' "$MF")" \
   '
-  # Split "a.b.<name>.x" → ["a","b",$provider,"x"]; "." literal maps "server.port".
   def sp(provider; p):
     p | split(".") | map(if . == "<name>" then provider else . end);
 
-  # Coerce a string value to its declared type. Anything that fails parse
-  # returns null, which the caller skips via setpath.
-  #
-  # Bug history: the original coerce() referenced `raw` (the function
-  # parameter) inside `catch raw`. When `fromjson`/etc. failed, the jq
-  # `try` clause binds `.` to the error VALUE for the catch handler —
-  # but inside the handler, parameter references get re-evaluated in
-  # the new context, picking up the error string. The fix is to bind
-  # raw to a local $r before the `try` and use $r in the handler. This
-  # applies to 1.19.0 only; the 1.18.9 script keeps the original (buggy
-  # but never exercised) form per the user directive to keep 1.18.9
-  # unchanged.
   def coerce(type; raw):
-    raw as $r
-    | if $r == null or $r == "" then null
-      elif type == "integer" then (try ($r | tonumber) catch null)
-      elif type == "boolean" then
-        # Tolerate both real JSON booleans (true/false) and the string
-        # forms "true"/"false" the daemon sometimes forwards from env vars.
-        if   $r == true  or $r == "true"  then true
-        elif $r == false or $r == "false" then false
-        else null
-        end
-      elif type == "opencode_autoupdate" then
-        # opencode 1.19.0 autoupdate is anyOf [boolean, "notify"]:
-        # strings "true"/"false" must become JSON booleans, while
-        # "notify" stays a string. Anything else passes through.
-        if   $r == true  or $r == "true"  then true
-        elif $r == false or $r == "false" then false
-        else $r
-        end
-      elif type == "json_array" or type == "json_object" then
-        # $r is already a real array/object (the daemon passes JSON values
-        # directly, not strings), so fromjson is a no-op. Use try/catch
-        # to also tolerate the case where the daemon forwards a string
-        # form (e.g. from CLI args).
-        (try ($r | fromjson) catch $r)
-      else
-        # string / enum / secret_string — pass through
-        $r
-      end;
+    if raw == null or raw == "" then null
+    elif type == "integer"            then (try (raw | tonumber) catch null)
+    elif type == "boolean"            then (raw == "true")
+    elif type == "json_array" or type == "json_object" then
+      (try (raw | fromjson) catch raw)
+    else
+      raw
+    end;
 
-  # Drive the loop: for each optional_inputs entry, set its coerced value at the declared path.
-  #
-  # We deliberately avoid the `// null` pattern for the daemon-value lookup
-  # because `//` treats `false` (and `0`, `""`) as "no value" — so a daemon
-  # that passes a real boolean `false` for OPENCODE_AUTOUPDATE would be
-  # replaced with null and the field silently dropped. The explicit
-  # `if ... == null` check preserves booleans (and integers, empty strings).
   reduce ($config.optional_inputs | to_entries[]) as $f ({}; . as $acc |
-    ($f.key) as $k | ($f.value) as $schema | ($schema.json_path) as $jp |
-    (if $input[$k] == null then null else $input[$k] end) as $raw |
-    ($schema.type) as $t |
+    ($f.key) as $k | ($f.value) as $schema | ($input[$k] // null) as $raw |
+    ($schema.type) as $t | ($schema.json_path) as $jp |
+    ($jp | sp($provider; .)) as $p |
     ($raw | coerce($t; .)) as $val |
-    if $val == null then $acc else $acc | setpath(($jp | sp($provider; .)); $val) end
+    if $val == null then $acc else $acc | setpath($p; $val) end
   )
   | . as $base
   | (if $is_builtin == "true" then
@@ -265,3 +228,4 @@ jq -n \
   ' > "$OUT"
 
 chmod 0600 "$OUT"
+echo "render-config.sh [opencode]: wrote $OUT (legacy manifest-driven path)"

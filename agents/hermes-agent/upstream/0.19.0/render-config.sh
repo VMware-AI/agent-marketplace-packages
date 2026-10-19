@@ -1,37 +1,123 @@
 #!/usr/bin/env bash
-# render-config.sh — manifest-driven renderer for hermes-agent.
+# render-config.sh — schema-driven renderer for hermes-agent.
 # Invoked by `agentpkg config generate hermes-agent`.
 #
-# This script is entirely driven by $AGENT_MARKETPLACE_MANIFEST (the
-# tarball's embedded manifest.json). Adding/changing a config field is a
-# matter of editing manifest.json — no shell changes required.
+# Two paths:
+#
+#   1. NEW (schema-driven; agent-marketplace-packages PR Phase 3):
+#      reads $MARKETPLACE_CONFIG_HERMES (YAML/JSON, slot 1) and
+#      $MARKETPLACE_CONFIG_HERMES_ENV (KEY=VALUE, slot 2) env vars
+#      (set by the OVA firstboot from the platform's
+#      guestinfo.marketplace_config.<slot> guestinfo keys),
+#      decodes, validates, and writes verbatim to the slot's
+#      render_to path. This is the contract for any package
+#      version that ships a config/ directory in its tarball.
+#
+#   2. LEGACY (manifest-driven; pre-Phase-3 tarballs):
+#      reads $AGENT_MARKETPLACE_CONFIG_INPUT (a JSON file the daemon
+#      writes containing the marketplace_inputs.<key>=<value> pairs)
+#      and walks the manifest's required_inputs / optional_inputs
+#      jsonPaths to assemble the per-slot files. Kept as a fallback
+#      so a Phase-2-and-earlier hermes-agent tarball continues to
+#      work until every operator has upgraded to a Phase-3-aware
+#      version. Removed in Phase 5 of the agent-platform-console
+#      refactor.
+#
+# Inputs (env vars):
+#   $AGENT_MARKETPLACE_CONFIG_INPUT    — daemon's config-input JSON (LEGACY)
+#   $AGENT_MARKETPLACE_MANIFEST        — path to manifest.json (LEGACY)
+#   $AGENT_MARKETPLACE_AGENT           — "hermes-agent"
+#   $AGENT_MARKETPLACE_VERSION         — e.g. "0.19.0"
+#   $AGENT_MARKETPLACE_DEPLOY_ROOT     — e.g. "$HOME/.local/hermes-agent/0.19.0"
+#   $MARKETPLACE_CONFIG_HERMES         — base64(JSON), hermes slot (NEW)
+#   $MARKETPLACE_CONFIG_HERMES_ENV     — base64(JSON), hermes-env slot (NEW)
 #
 # Outputs:
-#   - ~/.hermes/config.yaml  (YAML, generated via PyYAML from a JSON tree)
-#   - ~/.hermes/.env         (KEY=value lines for non-YAML secrets)
-#
-# Inputs (env vars set by agentpkg):
-#   $AGENT_MARKETPLACE_CONFIG_INPUT — path to daemon's config-input JSON
-#   $AGENT_MARKETPLACE_MANIFEST     — path to manifest.json
-#   $AGENT_MARKETPLACE_AGENT        — "hermes-agent"
-#   $AGENT_MARKETPLACE_VERSION      — e.g. "0.19.0"
-#   $AGENT_MARKETPLACE_DEPLOY_ROOT  — e.g. "$HOME/.local/hermes-agent/0.19.0"
+#   - ~/.hermes/config.yaml  (YAML, slot 1)
+#   - ~/.hermes/.env         (KEY=VALUE, slot 2)
 #
 # Two-layer model:
-#   - ADMIN-layer fields (provider/apiKey/model/compression/...) are declared
-#     in manifest.configs[].required_inputs / optional_inputs.
-#   - USER-layer (SOUL.md, skills/, memories/, cron/, sessions/) is OUT OF
-#     SCOPE; users create those directly.
+#   - ADMIN-layer fields (provider/apiKey/model/compression/...) are
+#     declared in the schema/manifest.
+#   - USER-layer (SOUL.md, skills/, memories/, cron/, sessions/) is OUT
+#     OF SCOPE; users create those directly.
 #
 # Exit codes:
 #   0  — success
-#   1  — internal error (env / input / manifest missing)
+#   1  — internal error (env / manifest missing)
 #   70 — required-input missing or invalid
-#   71 — script error (bad type / enum / pyyaml unavailable)
+#   71 — script error (bad type / bad JSON / pyyaml unavailable)
 set -euo pipefail
 
-: "${AGENT_MARKETPLACE_CONFIG_INPUT:?AGENT_MARKETPLACE_CONFIG_INPUT is required}"
-: "${AGENT_MARKETPLACE_MANIFEST:?AGENT_MARKETPLACE_MANIFEST is required}"
+: "${AGENT_MARKETPLACE_AGENT:?AGENT_MARKETPLACE_AGENT is required}"
+: "${AGENT_MARKETPLACE_VERSION:?AGENT_MARKETPLACE_VERSION is required}"
+
+# =============================================================================
+# NEW path: schema-driven raw config blobs.
+# =============================================================================
+# write_slot decodes the base64 JSON blob and writes it in the format
+# implied by the render_to filename extension:
+#   - *.yaml / *.yml  → use yq to convert JSON → YAML (falls back to
+#                        a hand-rolled python one-liner if yq is not
+#                        installed)
+#   - .env            → flatten the JSON object to KEY=VALUE lines
+#   - anything else   → assume JSON, write verbatim
+write_slot() {
+  local slot_name="$1"
+  local env_var="$2"
+  local render_to="$3"
+  local mode="$4"
+  if [[ -z "${!env_var:-}" ]]; then
+    return 1
+  fi
+  local decoded
+  decoded="$(printf '%s' "${!env_var}" | base64 -d)"
+  if ! printf '%s' "$decoded" | jq empty 2>/dev/null; then
+    echo "render-config.sh [hermes-agent]: $env_var is not valid JSON" >&2
+    exit 71
+  fi
+  mkdir -p "$(dirname "$render_to")"
+  case "$render_to" in
+    *.yaml|*.yml)
+      if command -v yq >/dev/null 2>&1; then
+        printf '%s' "$decoded" | yq -P > "$render_to"
+      elif command -v python3 >/dev/null 2>&1; then
+        printf '%s' "$decoded" | python3 -c "import sys, json, yaml; sys.stdout.write(yaml.safe_dump(json.load(sys.stdin), default_flow_style=False, sort_keys=False))" > "$render_to"
+      else
+        echo "render-config.sh [hermes-agent]: no yq or python3+yaml for $render_to" >&2
+        exit 71
+      fi
+      ;;
+    .env|*.env)
+      # Flatten the JSON object to KEY=VALUE lines. Strings keep their
+      # value (single-quoted for safety); numbers/booleans go in raw
+      # form. Nested objects are JSON-stringified (the .env format
+      # doesn't support nesting; the hermes daemon's loader expects
+      # only flat env vars in this file).
+      printf '%s' "$decoded" | jq -r 'to_entries | .[] | (.key) + "=" + (if (.value | type) == "string" then (.value | tojson) else (.value | tostring) end)' > "$render_to"
+      ;;
+    *)
+      printf '%s' "$decoded" | jq . > "$render_to"
+      ;;
+  esac
+  chmod "$mode" "$render_to"
+  echo "render-config.sh [hermes-agent]: wrote $render_to (new schema-driven path)"
+  return 0
+}
+
+new_path_used=0
+if write_slot "hermes"     "MARKETPLACE_CONFIG_HERMES"     "$HOME/.hermes/config.yaml" 0600; then new_path_used=1; fi
+if write_slot "hermes-env" "MARKETPLACE_CONFIG_HERMES_ENV" "$HOME/.hermes/.env"        0600; then new_path_used=1; fi
+if [[ "$new_path_used" == "1" ]]; then
+  exit 0
+fi
+
+# =============================================================================
+# LEGACY path: manifest-driven (kept for backward compat with pre-Phase-3
+# tarballs; removed in Phase 5).
+# =============================================================================
+: "${AGENT_MARKETPLACE_CONFIG_INPUT:?AGENT_MARKETPLACE_CONFIG_INPUT is required (legacy path)}"
+: "${AGENT_MARKETPLACE_MANIFEST:?AGENT_MARKETPLACE_MANIFEST is required (legacy path)}"
 
 if [[ ! -f "$AGENT_MARKETPLACE_CONFIG_INPUT" ]]; then
   echo "render-config.sh [hermes-agent]: config input not found: $AGENT_MARKETPLACE_CONFIG_INPUT" >&2

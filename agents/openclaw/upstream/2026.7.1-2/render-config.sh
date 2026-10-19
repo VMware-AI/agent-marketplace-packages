@@ -1,36 +1,80 @@
 #!/usr/bin/env bash
-# render-config.sh — manifest-driven renderer for openclaw.
+# render-config.sh — schema-driven renderer for openclaw.json.
 # Invoked by `agentpkg config generate openclaw`.
 #
-# This script is entirely driven by $AGENT_MARKETPLACE_MANIFEST (the
-# tarball's embedded manifest.json). Adding/changing a config field is a
-# matter of editing manifest.json — no shell changes required.
+# Two paths:
 #
-# Inputs (env vars set by agentpkg):
-#   $AGENT_MARKETPLACE_CONFIG_INPUT — path to daemon's config-input JSON
-#   $AGENT_MARKETPLACE_MANIFEST     — path to manifest.json (extracted by CLI)
-#   $AGENT_MARKETPLACE_AGENT        — "openclaw"
-#   $AGENT_MARKETPLACE_VERSION      — e.g. "2026.7.1-2"
-#   $AGENT_MARKETPLACE_DEPLOY_ROOT  — e.g. "$HOME/.local/openclaw/2026.7.1-2"
+#   1. NEW (schema-driven; agent-marketplace-packages PR Phase 3):
+#      reads $MARKETPLACE_CONFIG_OPENCLAW (base64-encoded JSON, set
+#      by the OVA firstboot from the platform's
+#      guestinfo.marketplace_config.openclaw guestinfo key), decodes,
+#      validates, and writes verbatim to $RENDER_TO. This is the
+#      contract for any package version that ships a config/ directory
+#      in its tarball.
+#
+#   2. LEGACY (manifest-driven; pre-Phase-3 tarballs):
+#      reads $AGENT_MARKETPLACE_CONFIG_INPUT (a JSON file the daemon
+#      writes containing the marketplace_inputs.<key>=<value> pairs)
+#      and walks the manifest's required_inputs / optional_inputs
+#      jsonPaths to assemble openclaw.json. Kept as a fallback so a
+#      Phase-2-and-earlier openclaw tarball continues to work until
+#      every operator has upgraded to a Phase-3-aware version.
+#      Removed in Phase 5 of the agent-platform-console refactor.
+#
+# Inputs (env vars):
+#   $AGENT_MARKETPLACE_CONFIG_INPUT    — path to daemon's config-input JSON
+#                                        (LEGACY path only)
+#   $AGENT_MARKETPLACE_MANIFEST        — path to manifest.json (LEGACY path only)
+#   $AGENT_MARKETPLACE_AGENT           — "openclaw"
+#   $AGENT_MARKETPLACE_VERSION         — e.g. "2026.7.1-2"
+#   $AGENT_MARKETPLACE_DEPLOY_ROOT     — e.g. "$HOME/.local/openclaw/2026.7.1-2"
+#   $MARKETPLACE_CONFIG_OPENCLAW       — base64(JSON), set by OVA firstboot
+#                                        (NEW path)
 #
 # Output:
 #   ~/.openclaw/openclaw.json (mode 0600, JSON5-compatible pure JSON)
 #
 # Two-layer model:
-#   - ADMIN-layer fields (provider/apiKey/gateway/diagnostics/...) are declared
-#     in manifest.configs[0].required_inputs / optional_inputs.
-#   - USER-layer (agents.list, plugins.entries, channels.*, ...) is OUT OF
-#     SCOPE; users edit those directly after install.
+#   - ADMIN-layer fields (provider/apiKey/gateway/diagnostics/...) are
+#     declared in the schema/manifest.
+#   - USER-layer (agents.list, plugins.entries, channels.*, ...) is OUT
+#     OF SCOPE; users edit those directly after install.
 #
 # Exit codes:
 #   0  — success
-#   1  — internal error (env / input / manifest missing)
+#   1  — internal error (env / manifest missing)
 #   70 — required-input missing or invalid
 #   71 — script error (bad type / enum / parse failure)
 set -euo pipefail
 
-: "${AGENT_MARKETPLACE_CONFIG_INPUT:?AGENT_MARKETPLACE_CONFIG_INPUT is required}"
-: "${AGENT_MARKETPLACE_MANIFEST:?AGENT_MARKETPLACE_MANIFEST is required}"
+: "${AGENT_MARKETPLACE_AGENT:?AGENT_MARKETPLACE_AGENT is required}"
+: "${AGENT_MARKETPLACE_VERSION:?AGENT_MARKETPLACE_VERSION is required}"
+
+RENDER_TO="$HOME/.openclaw/openclaw.json"
+MODE="0600"
+
+# =============================================================================
+# NEW path: schema-driven raw config blob.
+# =============================================================================
+if [[ -n "${MARKETPLACE_CONFIG_OPENCLAW:-}" ]]; then
+  decoded="$(printf '%s' "$MARKETPLACE_CONFIG_OPENCLAW" | base64 -d)"
+  if ! printf '%s' "$decoded" | jq empty 2>/dev/null; then
+    echo "render-config.sh [openclaw]: MARKETPLACE_CONFIG_OPENCLAW is not valid JSON" >&2
+    exit 71
+  fi
+  mkdir -p "$(dirname "$RENDER_TO")"
+  printf '%s' "$decoded" | jq . > "$RENDER_TO"
+  chmod "$MODE" "$RENDER_TO"
+  echo "render-config.sh [openclaw]: wrote $RENDER_TO from MARKETPLACE_CONFIG_OPENCLAW (new schema-driven path)"
+  exit 0
+fi
+
+# =============================================================================
+# LEGACY path: manifest-driven (kept for backward compat with pre-Phase-3
+# tarballs; removed in Phase 5).
+# =============================================================================
+: "${AGENT_MARKETPLACE_CONFIG_INPUT:?AGENT_MARKETPLACE_CONFIG_INPUT is required (legacy path)}"
+: "${AGENT_MARKETPLACE_MANIFEST:?AGENT_MARKETPLACE_MANIFEST is required (legacy path)}"
 
 if [[ ! -f "$AGENT_MARKETPLACE_CONFIG_INPUT" ]]; then
   echo "render-config.sh [openclaw]: config input not found: $AGENT_MARKETPLACE_CONFIG_INPUT" >&2
