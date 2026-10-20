@@ -1,0 +1,40 @@
+# openclaw 2026.7.1-2 — example config
+#
+# The platform loads this on the "Load example" button. Pick a provider;
+# `apiKey` is auto-injected at deploy time. Anything not declared in
+# config/schema.json still passes through (additionalProperties: true at
+# every level).
+
+openclaw:
+  models:
+    providers:
+      openai:
+        apiKey: ""             # auto-injected (x-secret-source: virtual_key)
+        # baseUrl: "https://api.openai.com/v1"  # uncomment for custom base URL
+  agents:
+    defaults:
+      model:
+        primary: gpt-4o
+  gateway:
+    mode: local
+    bind: lan
+    port: 8080
+    auth:
+      mode: token
+      token: ""               # set this in raw mode; x-secret-source: user_input
+      allowTailscale: false
+    controlUi:
+      enabled: true
+      basePath: /
+      allowedOrigins: []
+    reload:
+      mode: hot
+  diagnostics:
+    enabled: false
+    otel:
+      endpoint: ""
+  update:
+    channel: stable
+    checkOnStart: true
+    auto:
+      enabled: false

@@ -267,3 +267,192 @@ agentpkg runs after `install.sh` succeeds and: writes the unit file to `~/.confi
 | `mode` | yes | chmod mode (string, e.g. `"0600"`). Informational — the render script performs the chmod |
 
 The render-config.sh script for each agent lives at `<version>/render-config.sh` in the tarball and is invoked by `agentpkg config generate <agent> --config-input <file>` (Stage 1 of install). The script reads `$AGENT_MARKETPLACE_CONFIG_INPUT` (a JSON file the daemon writes), parses its keys, and writes the config file to `render_to` with the declared `mode`.
+
+## Config schemas (schema 1.2+, `config/` directory)
+
+> New in 1.2. Optional but strongly recommended. The `configs[]` block in `manifest.json` is the *delivery contract* (file path + mode + name); the `config/` directory is the *shape contract* — it tells the platform's deploy wizard what the rendered config file's structure looks like, so the form can be generated from JSON Schema and the raw YAML/JSON editor can validate user input.
+
+Per-agent layout (relative to the version directory):
+
+```
+agents/<name>/<source>/<version>/
+├── manifest.json
+├── install.sh
+├── render-config.sh
+├── payload/
+└── config/                       # NEW in 1.2
+    ├── schema.json               # full multi-slot JSON Schema (draft-07)
+    ├── example.yaml              # example values; "Load example" in the wizard
+    ├── <slotName>.schema.json    # OPTIONAL: per-slot fragment (migration ramp)
+    └── <slotName>.example.yaml   # OPTIONAL: per-slot example
+```
+
+### `config/schema.json`
+
+Top-level multi-slot JSON Schema (draft-07). The platform's resolver reads this verbatim and stamps enrichment keywords on top (see below); the wizard's form library consumes it directly. The top-level shape is:
+
+```json
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "type": "object",
+  "additionalProperties": true,
+  "properties": {
+    "<slotName>": { "type": "object", "...": "..." }
+  }
+}
+```
+
+`<slotName>` must match `manifest.configs[].name`. Each slot's value is a full JSON Schema for the rendered config file. For multi-slot packages (e.g. `hermes-agent`, which has both `hermes` for `config.yaml` and `hermes-env` for `.env`), each slot is a sibling under `properties`.
+
+### `config/example.yaml`
+
+Multi-document YAML; one document per slot (use `---` between slots). The wizard's "Load example" button parses this with `yaml.v3` and pre-fills the form (or the raw editor) with the values. Use realistic-but-redacted values: real-looking model ids, real-looking provider names, but **never paste real API keys** — those are auto-injected from the bound virtual key.
+
+### Per-slot fragments (`config/<slotName>.schema.json`)
+
+**Migration ramp only.** When authored, the platform composes the per-slot fragments into a virtual top-level schema. Once you have a top-level `config/schema.json`, the per-slot fragments are ignored. Plan to consolidate per-slot fragments into a top-level file in a follow-up release.
+
+### Vocabulary boundary
+
+Schemas must use the **conservative draft-07** vocabulary. Specifically supported:
+
+- `type` (string / integer / number / boolean / array / object / null)
+- `properties` + `required` + `additionalProperties` (always `true` at the top level and at every nested object — power users can add anything in raw mode)
+- `enum`, `const`, `default`
+- `minimum`, `maximum`, `minLength`, `maxLength`, `pattern`, `format` (`uri`, `email`, `hostname`, `ipv4`, `ipv6`, `uuid` are recognised by `ajv-formats`)
+- `minItems`, `maxItems`, `uniqueItems`
+- `description`, `title`, `examples`
+- `oneOf` / `anyOf` / `allOf` (use sparingly — the form library only renders the first valid branch)
+- `x-*` extensions (see below)
+
+**Not supported** (will be rejected by `ajv@8` in strict mode and by `santhosh-tekuri/jsonschema/v5`):
+
+- `if` / `then` / `else` (draft-07 conditional; needs draft 2019-09)
+- `unevaluatedProperties` (draft 2019-09)
+- `$ref` to external files (the platform's resolver is single-file only; inline subschemas via `allOf`)
+- `$defs` is allowed but not surfaced as separate components in the form
+
+### `x-*` enrichment keywords
+
+The platform stamps these on top of the user's schema; **do not write them by hand** (the server overrides). They're documented here so template authors can read their schemas and know what the form library will do.
+
+| Keyword | Where | Meaning |
+|---|---|---|
+| `x-secret-source: "virtual_key"` | string field | The platform auto-injects the value from the bound virtual key at deploy time. Form: widget is locked (no input); raw mode: the user's value is discarded and replaced. |
+| `x-secret-source: "user_input"` | string field | User-supplied secret. Form: `format: "password"` input; raw mode: value is passed through verbatim. The form library marks the field as `format: "password"` automatically. |
+| `x-secret-source: "env_var_name"` | string field | The platform auto-injects the **name** of the env var (not the key itself) that holds the provider's API key. Used by `hermes-agent` where the config file references the env-var name and the actual key lives in the env. |
+| `x-provider-choices: { "<field>": { "builtin": [...], "custom": "..." } }` | on the parent object | The form library renders the named field as a "pick provider" select (driven by `supported_providers.builtin + custom`) plus a sub-form for the chosen provider's options. The `x-provider-choices` block is stamped by the server from `manifest.configs[].supported_providers` — schema authors do not write it. |
+| `x-provider-choices-source: "<slotName>"` | string field | The provider choices for this field are inherited from `<slotName>`'s `supported_providers` block. Used by `hermes-agent`'s `model.provider` (which inherits from the `hermes` slot's choices). |
+
+The server-side enricher (in `agent-platform-backend/internal/graph/agent_marketplace_helpers.go::enrichSchema`) is the single source of truth for these — schema authors should expect the server to add/override them.
+
+### Migration timeline
+
+| State | Marker | Behaviour |
+|---|---|---|
+| **No `config/` directory** | `config_schemas_status = "missing"` | Wizard falls back to the legacy form (typed fields from `manifest.configs[].required_inputs / optional_inputs`). Raw editor only; no schema validation. |
+| **Per-slot fragments only** | `config_schemas_status = "partial"` | Form renders for the schema'd slot; other slot goes raw-only. |
+| **Top-level `config/schema.json`** | `config_schemas_status = "ok"` | Form renders for all slots; full schema validation. |
+
+The publish-time validator (`make validate` in this repo, when configured) refuses to build a tarball whose `config_schemas_status` is `missing` once the package has shipped a version with schemas — there's no path back to "no schemas" once you've adopted them.
+
+### Worked example: `opencode` 1.19.0
+
+```json
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "type": "object",
+  "additionalProperties": true,
+  "properties": {
+    "opencode": {
+      "type": "object",
+      "additionalProperties": true,
+      "required": ["provider"],
+      "properties": {
+        "provider": {
+          "type": "object",
+          "minProperties": 1,
+          "additionalProperties": {
+            "type": "object",
+            "properties": {
+              "options": {
+                "type": "object",
+                "properties": {
+                  "apiKey": { "type": "string", "x-secret-source": "virtual_key" },
+                  "baseURL": { "type": "string", "format": "uri" }
+                }
+              }
+            }
+          }
+        },
+        "model":      { "type": "string" },
+        "small_model":{ "type": "string" },
+        "share":      { "type": "string", "enum": ["manual", "auto", "disabled"] },
+        "server": {
+          "type": "object",
+          "properties": {
+            "port":     { "type": "integer", "minimum": 1, "maximum": 65535 },
+            "hostname": { "type": "string" }
+          }
+        }
+      }
+    }
+  }
+}
+```
+
+And the matching `config/example.yaml`:
+
+```yaml
+opencode:
+  provider:
+    openai:
+      options:
+        apiKey: ""          # auto-injected (x-secret-source: virtual_key)
+  model: gpt-4o
+  server:
+    port: 8080
+    hostname: 0.0.0.0
+```
+
+When this package is published and the platform syncs it, the wizard shows a form with: a "Pick provider" select (with all `supported_providers.builtin` ids + "custom"), the chosen provider's `apiKey` field locked (the user can't type — they bind a virtual key in a separate widget), `model` as a free-text input, `share` as a 3-option select, and `server.port` / `server.hostname` as a nested sub-form. The "Raw YAML/JSON" toggle drops the user into a CodeMirror editor that validates against the same schema on every keystroke.
+
+### Worked example: `hermes-agent` 0.19.0 (multi-slot, mixed file formats)
+
+`config/schema.json` has two siblings under `properties`:
+
+```json
+{
+  "properties": {
+    "hermes":     { "type": "object", "...": "YAML-shaped schema" },
+    "hermes-env": { "type": "object", "...": "env-var-shaped schema" }
+  }
+}
+```
+
+The `hermes` slot's `model.provider` field uses `x-provider-choices-source: "hermes"` to inherit the provider list from the same slot. The `hermes-env` slot has no provider logic of its own — the dynamic `<PROVIDER>_API_KEY` env-var line is injected by the platform based on the chosen provider from the `hermes` slot.
+
+`config/example.yaml` uses `---` to separate the two slots:
+
+```yaml
+hermes:
+  model:
+    provider: openai
+    default: gpt-4o
+
+---
+
+hermes-env:
+  HERMES_API_TIMEOUT: 60
+  HERMES_OPENROUTER_CACHE: false
+```
+
+The in-VM `render-config.sh` knows each slot's file format (from `manifest.configs[].file` extension / name): the `hermes` slot writes YAML via `yq`, the `hermes-env` slot writes `KEY=VALUE` lines via plain `printf`.
+
+### See also
+
+- `agents/opencode/upstream/1.19.0/config/` — full single-slot example
+- `agents/openclaw/upstream/2026.7.1-2/config/` — full single-slot example (different shape)
+- `agents/hermes-agent/upstream/0.19.0/config/` — full multi-slot, mixed-format example
+- `internal/manifest/manifest.go::ConfigSpec` — the Go type for the legacy `configs[].required_inputs/optional_inputs` shape (still the VM's `render-config.sh` contract during the transition)
+- `internal/manifest/manifest.go::InputField` — the Go type for a single legacy field (still drives the platform's typed-form fallback when `config_schemas_status = "missing"`)

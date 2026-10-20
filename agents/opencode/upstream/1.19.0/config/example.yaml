@@ -1,0 +1,36 @@
+# opencode 1.19.0 — example config
+#
+# Multi-document YAML: one document per config slot. The slot name (top-level
+# key) matches `manifest.configs[].name`. The platform's deploy wizard loads
+# this on the "Load example" button; raw-mode users can copy/paste from here.
+#
+# The `provider` field is a map keyed by provider id. Pick one (the chosen
+# provider's block carries the API key + options). `apiKey` is auto-injected
+# at deploy time — leave it empty or write `<VIRTUAL_KEY>` and the platform
+# will substitute the real key from the bound LiteLLM virtual key.
+#
+# Anything not declared in config/schema.json still passes through
+# (additionalProperties: true at every level). Use raw mode to add fields the
+# schema doesn't know about — they go straight to opencode.json on the VM.
+
+opencode:
+  provider:
+    openai:
+      options:
+        apiKey: ""          # auto-injected (x-secret-source: virtual_key)
+        # baseURL: "https://api.openai.com/v1"  # uncomment for custom base URL
+  model: gpt-4o
+  small_model: gpt-4o-mini
+  default_agent: build
+  username: ""
+  autoupdate: notify
+  share: manual
+  logLevel: INFO
+  snapshot: true
+  subagent_depth: 3
+  server:
+    port: 8080
+    hostname: 0.0.0.0
+    cors:
+      - "https://app.example.com"
+    mdns: false

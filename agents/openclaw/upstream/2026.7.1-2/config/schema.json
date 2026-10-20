@@ -1,0 +1,213 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://agent-marketplace-packages/agents/openclaw/2026.7.1-2/config/schema.json",
+  "title": "openclaw",
+  "description": "openclaw 2026.7.1-2 — openclaw gateway daemon (openclaw.ai). Renders to ~/.openclaw/openclaw.json (mode 0600). The `openclaw` slot is the single config block.",
+  "type": "object",
+  "additionalProperties": true,
+  "properties": {
+    "openclaw": {
+      "type": "object",
+      "description": "openclaw config block. The provider structure mirrors opencode's: a map keyed by provider id, with the chosen provider's block under `models.providers.<chosen>`.",
+      "additionalProperties": true,
+      "required": ["models", "agents"],
+      "properties": {
+        "models": {
+          "type": "object",
+          "description": "Model and provider configuration.",
+          "additionalProperties": true,
+          "properties": {
+            "providers": {
+              "type": "object",
+              "description": "Provider map keyed by provider id. The form renders this as a 'pick provider + fill options' widget driven by `x-provider-choices` (server-stamped from manifest.configs[].supported_providers).",
+              "minProperties": 1,
+              "additionalProperties": {
+                "type": "object",
+                "additionalProperties": true,
+                "properties": {
+                  "baseUrl": {
+                    "type": "string",
+                    "description": "Base URL for custom OpenAI-compatible providers. Required when the chosen provider is `custom`.",
+                    "format": "uri"
+                  },
+                  "localService": {
+                    "type": "object",
+                    "description": "Local service config (custom providers). `command` is the npm package or binary the daemon shells out to.",
+                    "additionalProperties": true,
+                    "properties": {
+                      "command": {
+                        "type": "string",
+                        "description": "Command / npm package to run for the local service."
+                      }
+                    }
+                  },
+                  "apiKey": {
+                    "type": "string",
+                    "format": "password",
+                    "description": "API key for the provider. Auto-injected from the bound virtual key at deploy time — leave empty.",
+                    "x-secret-source": "virtual_key"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "agents": {
+          "type": "object",
+          "description": "Agent runtime settings.",
+          "additionalProperties": true,
+          "properties": {
+            "defaults": {
+              "type": "object",
+              "description": "Default agent settings.",
+              "additionalProperties": true,
+              "properties": {
+                "model": {
+                  "type": "object",
+                  "additionalProperties": true,
+                  "properties": {
+                    "primary": {
+                      "type": "string",
+                      "description": "Primary model id (e.g. 'gpt-4o', 'claude-sonnet-4-5')."
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        "gateway": {
+          "type": "object",
+          "description": "openclaw gateway configuration (the daemon's HTTP server + auth).",
+          "additionalProperties": true,
+          "properties": {
+            "mode": {
+              "type": "string",
+              "enum": ["local", "remote"],
+              "description": "Gateway operation mode. `local` runs the gateway in-process; `remote` connects to a separate gateway."
+            },
+            "bind": {
+              "type": "string",
+              "enum": ["auto", "loopback", "lan", "tailnet", "custom"],
+              "description": "Network bind mode. `loopback` = 127.0.0.1; `lan` = 0.0.0.0; `tailnet` = Tailscale interface; `custom` = free-form."
+            },
+            "port": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 65535,
+              "description": "TCP port the gateway binds to (default 8080)."
+            },
+            "auth": {
+              "type": "object",
+              "description": "Authentication settings for the gateway.",
+              "additionalProperties": true,
+              "properties": {
+                "mode": {
+                  "type": "string",
+                  "enum": ["none", "token", "password", "trusted-proxy"],
+                  "description": "Auth mode. `none` is dev-only; `token` / `password` are user-facing; `trusted-proxy` defers to an upstream proxy."
+                },
+                "token": {
+                  "type": "string",
+                  "format": "password",
+                  "description": "Static auth token (mode=token).",
+                  "x-secret-source": "user_input"
+                },
+                "password": {
+                  "type": "string",
+                  "format": "password",
+                  "description": "Auth password (mode=password).",
+                  "x-secret-source": "user_input"
+                },
+                "allowTailscale": {
+                  "type": "boolean",
+                  "description": "Allow Tailscale identity header to skip auth."
+                }
+              }
+            },
+            "controlUi": {
+              "type": "object",
+              "description": "Web control UI settings.",
+              "additionalProperties": true,
+              "properties": {
+                "enabled": {
+                  "type": "boolean",
+                  "description": "Serve the web UI."
+                },
+                "basePath": {
+                  "type": "string",
+                  "description": "URL base path for the UI (default '/')."
+                },
+                "allowedOrigins": {
+                  "type": "array",
+                  "items": { "type": "string" },
+                  "description": "CORS origins allowed to embed the UI."
+                }
+              }
+            },
+            "reload": {
+              "type": "object",
+              "description": "Config reload behavior.",
+              "additionalProperties": true,
+              "properties": {
+                "mode": {
+                  "type": "string",
+                  "enum": ["hybrid", "hot", "restart", "off"],
+                  "description": "Reload mode. `hot` applies changes without dropping connections; `restart` restarts the gateway; `off` disables reload."
+                }
+              }
+            }
+          }
+        },
+        "diagnostics": {
+          "type": "object",
+          "description": "OpenTelemetry / diagnostics settings.",
+          "additionalProperties": true,
+          "properties": {
+            "enabled": {
+              "type": "boolean",
+              "description": "Enable diagnostic export."
+            },
+            "otel": {
+              "type": "object",
+              "additionalProperties": true,
+              "properties": {
+                "endpoint": {
+                  "type": "string",
+                  "description": "OTLP endpoint URL (e.g. http://localhost:4317).",
+                  "format": "uri"
+                }
+              }
+            }
+          }
+        },
+        "update": {
+          "type": "object",
+          "description": "Self-update settings.",
+          "additionalProperties": true,
+          "properties": {
+            "channel": {
+              "type": "string",
+              "enum": ["stable", "extended-stable", "beta", "dev"],
+              "description": "Update channel."
+            },
+            "checkOnStart": {
+              "type": "boolean",
+              "description": "Check for updates when the gateway starts."
+            },
+            "auto": {
+              "type": "object",
+              "additionalProperties": true,
+              "properties": {
+                "enabled": {
+                  "type": "boolean",
+                  "description": "Auto-install updates matching the channel."
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}
