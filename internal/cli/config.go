@@ -1,10 +1,14 @@
 package cli
 
 import (
+	"bytes"
+	"encoding/base64"
+	"encoding/json"
 	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 
 	"github.com/VMware-AI/agent-marketplace-packages/internal/manifest"
 	"github.com/spf13/cobra"
@@ -130,29 +134,14 @@ func runConfigGenerate(c *Client, name, source, channel, version, targetRoot, ca
 	}
 
 	// Read manifest so we know (a) where render-config.sh lives (b) which
-	// config files to verify post-render (c) which env vars to pass.
+	// config files to verify post-render (c) which config slots the agent
+	// expects. The manifest is NOT staged to a tmpfile for the script
+	// anymore: since the Phase-5 refactor the render scripts read only their
+	// MARKETPLACE_CONFIG_<SLOT> base64 env vars and never jq the manifest.
 	mf, err := extractManifestFromTarball(cachePath, version)
 	if err != nil {
 		return err
 	}
-
-	// Stage the raw manifest.json to a tmpfile for render-config.sh. Manifest-
-	// driven render-config.sh needs $AGENT_MARKETPLACE_MANIFEST to read the
-	// configs[] schema (required_inputs, optional_inputs, supported_providers,
-	// etc.) without re-extracting from the tarball itself.
-	manifestBytes, err := extractManifestBytesFromTarball(cachePath, version)
-	if err != nil {
-		return err
-	}
-	manifestPath, err := os.CreateTemp("", "agentpkg-mf-*.json")
-	if err != nil {
-		return fmt.Errorf("create tmp for manifest: %w", err)
-	}
-	defer os.Remove(manifestPath.Name())
-	if _, err := manifestPath.Write(manifestBytes); err != nil {
-		return fmt.Errorf("write manifest tmp: %w", err)
-	}
-	manifestPath.Close()
 
 	// Extract render-config.sh to a tmpfile.
 	renderScriptPath, err := os.CreateTemp("", "agentpkg-render-")
@@ -169,11 +158,24 @@ func runConfigGenerate(c *Client, name, source, channel, version, targetRoot, ca
 	deployRoot := filepath.Join(resolveTargetRoot(targetRoot), name, version)
 	targetRootAbs := resolveTargetRoot(targetRoot)
 
+	// Split the daemon's config-input into one base64 env var per manifest
+	// slot. This is what render-config.sh actually reads: each script does
+	// `base64 -d` on MARKETPLACE_CONFIG_<SLOT> and writes the decoded bytes
+	// VERBATIM to its render_to path. That means the payload must be the SLOT
+	// BODY (input["<slotName>"]), not the wrapper — passing the wrapper would
+	// render `{"opencode":{"model":...}}` instead of `{"model":...}`.
+	slotEnv, err := slotEnvVars(inputPath, mf.Configs)
+	if err != nil {
+		// Slot-level problems are the same class of failure the scripts signal
+		// with their `:?` guard (missing required input), so map to exit 70 to
+		// keep the contract with callers unchanged.
+		fmt.Fprintf(os.Stderr, "agentpkg: %v\n", err)
+		os.Exit(70)
+	}
+
 	// Invoke render-config.sh with the agent-marketplace env vars.
 	cmd := exec.Command(renderScriptPath.Name())
 	cmd.Env = append(os.Environ(),
-		"AGENT_MARKETPLACE_CONFIG_INPUT="+inputPath,
-		"AGENT_MARKETPLACE_MANIFEST="+manifestPath.Name(),
 		"AGENT_MARKETPLACE_AGENT="+name,
 		"AGENT_MARKETPLACE_VERSION="+version,
 		"AGENT_MARKETPLACE_DEPLOY_ROOT="+deployRoot,
@@ -186,6 +188,7 @@ func runConfigGenerate(c *Client, name, source, channel, version, targetRoot, ca
 		// it only controls DEPLOY_ROOT.
 		"AGENT_MARKETPLACE_TARGET_ROOT="+targetRootAbs,
 	)
+	cmd.Env = append(cmd.Env, slotEnv...)
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 	if err := cmd.Run(); err != nil {
@@ -220,6 +223,54 @@ func runConfigGenerate(c *Client, name, source, channel, version, targetRoot, ca
 	}
 
 	return nil
+}
+
+// slotEnvVars converts the daemon's config-input file into the
+// MARKETPLACE_CONFIG_<SLOT> env vars that render-config.sh reads.
+//
+// Contract (must match render-config.sh exactly):
+//   - env var name = "MARKETPLACE_CONFIG_" + upper(slotName) with "-" → "_"
+//     (hermes-agent's "hermes-env" slot becomes MARKETPLACE_CONFIG_HERMES_ENV)
+//   - env var value = base64(JSON) of the SLOT BODY, i.e. input[slotName].
+//     The scripts `base64 -d` the value and write it verbatim to render_to,
+//     so encoding the whole wrapper would nest the slot key into the rendered
+//     file and produce the wrong shape.
+//
+// Input file shape is the same slot-keyed object the config/example.* files
+// use, so a raw-mode frontend can submit its edited example verbatim.
+//
+// Returns an error if the file is unreadable, is not a JSON object, or is
+// missing a declared slot — the same failure class the scripts signal with
+// their `:?` guard (exit 70).
+func slotEnvVars(inputPath string, cfgs []manifest.ConfigSpec) ([]string, error) {
+	if len(cfgs) == 0 {
+		return nil, nil
+	}
+	raw, err := os.ReadFile(inputPath)
+	if err != nil {
+		return nil, fmt.Errorf("read config input: %w", err)
+	}
+	var input map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &input); err != nil {
+		return nil, fmt.Errorf("config input is not a JSON object keyed by config slot: %w", err)
+	}
+	env := make([]string, 0, len(cfgs))
+	for _, cfg := range cfgs {
+		body, ok := input[cfg.Name]
+		if !ok {
+			return nil, fmt.Errorf("config input is missing slot %q (declared by manifest configs[])", cfg.Name)
+		}
+		// Re-marshal the raw slot body so the base64 payload is always valid
+		// JSON regardless of how the input file was formatted.
+		var compact bytes.Buffer
+		if err := json.Compact(&compact, body); err != nil {
+			return nil, fmt.Errorf("slot %q is not valid JSON: %w", cfg.Name, err)
+		}
+		env = append(env, fmt.Sprintf("MARKETPLACE_CONFIG_%s=%s",
+			strings.ToUpper(strings.ReplaceAll(cfg.Name, "-", "_")),
+			base64.StdEncoding.EncodeToString(compact.Bytes())))
+	}
+	return env, nil
 }
 
 // resolveTargetRoot returns targetRoot if non-empty, otherwise the default
