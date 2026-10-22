@@ -17,6 +17,8 @@ marketplace-api 是一个**只读**的 HTTP 服务，把 `dist/` 目录暴露成
 | `GET` | `/api/v1/agents/{name}/{source}/{version}/tarball` | ✅ | 下载 tarball 字节流（application/gzip） |
 | `GET` | `/api/v1/agents/{name}/{source}/{version}/sha256` | ✅ | 取 sha256 侧车文件（sha256sum 格式） |
 | `GET` | `/api/v1/agents/{name}/{source}/{version}/config-schema` | ✅ | 取 schema 1.1+ 的 admin 配置 schema |
+| `GET` | `/api/v1/agents/{name}/{source}/{version}/config/schema` | ✅ | 取该版本的 `config/schema.json`（驱动表单渲染） |
+| `GET` | `/api/v1/agents/{name}/{source}/{version}/config/example` | ✅ | 取该版本的 `config/example.*`（原样返回，供 raw 编辑器使用） |
 | `GET` | `/api/v1/index.json` | ✅ | 原始 dist/index.json（含完整 manifest，用于调试） |
 | `GET` | `/swagger` | ❌ 匿名 | Swagger UI HTML |
 | `GET` | `/swagger/openapi.json` | ❌ 匿名 | 原始 OpenAPI 3.0 spec |
@@ -204,6 +206,20 @@ curl -u ":$PW" https://host:8443/api/v1/agents/opencode/upstream/1.18.9/sha256 \
 curl -u ":$PW" \
   https://host:8443/api/v1/agents/opencode/upstream/1.18.9/config-schema
 ```
+
+### `GET /api/v1/agents/{name}/{source}/{version}/config/schema`
+
+返回该版本的 `config/schema.json` **原样字节**：一份 draft-07 JSON Schema，顶层 key 即配置槽名，与 `manifest.configs[].name` 一一对应。表单模式渲染器消费它；raw 模式下用它校验用户输入。
+
+Content-Type 恒为 `application/json`。版本没有 `config/` 目录时返回 404，错误码 `no_config_schema`，message 里带状态（`missing` / `partial`）。
+
+### `GET /api/v1/agents/{name}/{source}/{version}/config/example`
+
+返回该版本的 `config/example.*` **原样字节**，格式随智能体而定——JSON 配置的智能体（opencode、openclaw）返回 `application/json`，YAML 的（hermes-agent）返回 `application/yaml`。前端直接展示，编辑后原样提交。
+
+版本没有 `config/` 目录时返回 404，错误码 `no_config_example`。
+
+> **如何判断走哪种模式**：读 `index.json` 的 `agents[].versions[].config.status`——`ok`（全部槽位可渲染表单）/ `partial`（部分槽位）/ 无 `config` 键（只能 raw）。
 
 ### `GET /api/v1/index.json`
 

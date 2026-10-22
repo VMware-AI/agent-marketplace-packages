@@ -254,19 +254,33 @@ agentpkg runs after `install.sh` succeeds and: writes the unit file to `~/.confi
     "name":     "openclaw",
     "file":     "openclaw.json",
     "render_to": "~/.openclaw/openclaw.json",
-    "mode":     "0600"
+    "mode":     "0600",
+    "supported_providers": { "...": "..." }
   }
 ]
 ```
 
 | Field | Required | Notes |
 |-------|----------|-------|
-| `name` | yes | Logical name (informational) |
+| `name` | yes | Slot name. Must match a top-level key under `config/schema.json`'s `properties` — that key's value is the schema for this slot. Also the key `agentpkg` looks up in the config payload (see below) |
 | `file` | yes | Basename the agent's `render-config.sh` writes |
 | `render_to` | yes | Final on-host path (e.g. `~/.openclaw/openclaw.json`). agentpkg records this for uninstall; the agent's render script owns the actual write |
 | `mode` | yes | chmod mode (string, e.g. `"0600"`). Informational — the render script performs the chmod |
+| `supported_providers` | no | Catalog of built-in providers. The platform stamps `x-provider-choices` onto the schema's provider fields from this block |
 
-The render-config.sh script for each agent lives at `<version>/render-config.sh` in the tarball and is invoked by `agentpkg config generate <agent> --config-input <file>` (Stage 1 of install). The script reads `$AGENT_MARKETPLACE_CONFIG_INPUT` (a JSON file the daemon writes), parses its keys, and writes the config file to `render_to` with the declared `mode`.
+`configs[]` is the **delivery contract** only — where each file lands and under what permissions. The **shape contract** (which fields it may contain) is `config/schema.json`. The older `required_inputs` / `optional_inputs` blocks, which duplicated the schema field-by-field as `json_path` + `type`, have been removed.
+
+The render-config.sh script for each agent lives at `<version>/render-config.sh` in the tarball and is invoked by `agentpkg config generate <agent> --config-input <file>` (Stage 1 of install).
+
+**The config payload.** `--config-input` points at a slot-keyed JSON object whose top-level keys are the `configs[].name` values — the same shape as the `config/example.*` files, so a raw-mode frontend can submit its edited example verbatim:
+
+```json
+{ "openclaw": { "gateway": { "...": "..." } } }
+```
+
+`agentpkg` splits that by slot, base64-encodes each **slot body** (not the wrapper), and exports one `MARKETPLACE_CONFIG_<SLOT>` env var per slot — `MARKETPLACE_CONFIG_` + the uppercased slot name with `-` → `_`, so hermes-agent's `hermes-env` slot becomes `MARKETPLACE_CONFIG_HERMES_ENV`. Each `render-config.sh` decodes its own slot and writes the bytes verbatim to `render_to`, which is why the payload must be the body: encoding the wrapper would nest the slot key into the rendered file.
+
+The OVA firstboot path sets those same env vars directly (from `guestinfo.marketplace_config.<slot>`), so it is unaffected by how agentpkg derives them.
 
 ## Config schemas (schema 1.2+, `config/` directory)
 
@@ -283,6 +297,7 @@ agents/<name>/<source>/<version>/
 └── config/                       # NEW in 1.2
     ├── schema.json               # full multi-slot JSON Schema (draft-07)
     ├── example.yaml              # example values; "Load example" in the wizard
+    ├── example.json              # ...or the same values as JSON (see below)
     ├── <slotName>.schema.json    # OPTIONAL: per-slot fragment (migration ramp)
     └── <slotName>.example.yaml   # OPTIONAL: per-slot example
 ```
@@ -307,6 +322,8 @@ Top-level multi-slot JSON Schema (draft-07). The platform's resolver reads this 
 ### `config/example.yaml`
 
 Multi-document YAML; one document per slot (use `---` between slots). The wizard's "Load example" button parses this with `yaml.v3` and pre-fills the form (or the raw editor) with the values. Use realistic-but-redacted values: real-looking model ids, real-looking provider names, but **never paste real API keys** — those are auto-injected from the bound virtual key.
+
+`config/example.json` is accepted as an alternative when the agent's rendered file is JSON (opencode's `opencode.json`, openclaw's `openclaw.json`). Same slot-keyed shape, no `---` separator — one object whose keys are the slot names. Prefer it when the example is short enough that YAML's comments aren't carrying anything: a JSON example can be pasted straight into the raw editor, or dropped on the VM as the rendered file, without a YAML→JSON conversion step. Ship **one** of the two per agent; if both are present the platform prefers `.json`. `opencode` 1.19.0 and `openclaw` 2026.7.1-2 ship `example.json`; `hermes-agent` 0.19.0 ships `example.yaml` (its `hermes-env` slot is KEY=VALUE lines, which reads far better in YAML).
 
 ### Per-slot fragments (`config/<slotName>.schema.json`)
 
@@ -348,13 +365,53 @@ The server-side enricher (in `agent-platform-backend/internal/graph/agent_market
 
 ### Migration timeline
 
-| State | Marker | Behaviour |
+| State | `index.json` → `versions[].config.status` | Behaviour |
 |---|---|---|
-| **No `config/` directory** | `config_schemas_status = "missing"` | Wizard falls back to the legacy form (typed fields from `manifest.configs[].required_inputs / optional_inputs`). Raw editor only; no schema validation. |
-| **Per-slot fragments only** | `config_schemas_status = "partial"` | Form renders for the schema'd slot; other slot goes raw-only. |
-| **Top-level `config/schema.json`** | `config_schemas_status = "ok"` | Form renders for all slots; full schema validation. |
+| **No `config/` directory** | `"missing"` (the `config` key is absent) | Raw editor only, no schema validation. |
+| **`config/` but no top-level `schema.json`** | `"partial"` | Form renders for whatever slot is schema'd; other slots are raw-only. |
+| **Top-level `config/schema.json` present** | `"ok"` | Form renders for all slots; full schema validation. |
 
-The publish-time validator (`make validate` in this repo, when configured) refuses to build a tarball whose `config_schemas_status` is `missing` once the package has shipped a version with schemas — there's no path back to "no schemas" once you've adopted them.
+The status is computed at build time by `agentpkg package build` / `package reindex` and published in `index.json`, so a client can decide form vs raw with no extra request. The endpoints also report it in their 404 body, so a client that hits `/config/schema` directly learns the same thing.
+
+### Fetching the config files
+
+| Purpose | Endpoint | Content-Type |
+|---|---|---|
+| Form mode | `GET /api/v1/agents/{name}/{source}/{version}/config/schema` | `application/json` |
+| Raw mode | `GET /api/v1/agents/{name}/{source}/{version}/config/example` | follows the file — `application/json` for a JSON-rendered agent (opencode, openclaw), `application/yaml` for a YAML one (hermes-agent) |
+| Capability check | `GET /api/v1/index` → `agents[].versions[].config.status` | — |
+
+`/config/example` returns the file **byte-for-byte**; the frontend renders it as-is in its raw editor and submits the edited text back as the config payload. `/config/schema` returns the draft-07 JSON Schema whose top-level keys are the slot names.
+
+Both 404 when the version ships no `config/` directory, with error codes `no_config_schema` / `no_config_example` and the status in the message — distinct from the generic `not_found` for an unknown version, so a client can tell "no such agent version" from "that version predates schema-driven config".
+
+The files are copied out of each tarball into `dist/config/<agent>-<source>-<version>/` at build time; the server never unpacks a tarball to serve them.
+
+### End-to-end flow
+
+```
+marketplace-api                     serves, per agent/version:
+  GET .../config/schema   ─────┐
+  GET .../config/example  ──┐  │
+  index.json → config.status│  │
+                            │  │
+agent-platform-backend  ─────┘  │  fetches + caches, stamps x-* onto the schema
+                            │  │
+agent-platform-console  ─────┘  │  renders one of two modes:
+                                 │    form — generated from the schema
+                                 │    raw  — the example file, verbatim
+                                 │
+                                 ▼  submits slot-keyed JSON
+agent-platform-backend → VM daemon
+                            │  writes the payload to a file
+                            ▼
+agentpkg config generate <agent> --config-input <file>
+                            │  splits by configs[].name,
+                            │  base64s each slot body,
+                            │  exports MARKETPLACE_CONFIG_<SLOT>
+                            ▼
+render-config.sh  →  base64 -d  →  write verbatim to render_to (mode 0600)
+
 
 ### Worked example: `opencode` 1.19.0
 
@@ -367,19 +424,34 @@ The publish-time validator (`make validate` in this repo, when configured) refus
     "opencode": {
       "type": "object",
       "additionalProperties": true,
-      "required": ["provider"],
+      "required": ["model", "provider"],
       "properties": {
+        "$schema": { "type": "string", "format": "uri" },
         "provider": {
           "type": "object",
           "minProperties": 1,
           "additionalProperties": {
             "type": "object",
             "properties": {
+              "npm":   { "type": "string" },
+              "name":  { "type": "string" },
               "options": {
                 "type": "object",
                 "properties": {
-                  "apiKey": { "type": "string", "x-secret-source": "virtual_key" },
+                  "apiKey":  { "type": "string", "x-secret-source": "virtual_key" },
                   "baseURL": { "type": "string", "format": "uri" }
+                }
+              },
+              "models": {
+                "type": "object",
+                "minProperties": 1,
+                "additionalProperties": {
+                  "type": "object",
+                  "properties": {
+                    "name":  { "type": "string" },
+                    "limit": { "type": "object" },
+                    "modalities": { "type": "object" }
+                  }
                 }
               }
             }
@@ -401,21 +473,57 @@ The publish-time validator (`make validate` in this repo, when configured) refus
 }
 ```
 
-And the matching `config/example.yaml`:
+And the matching `config/example.json` — the minimum config that gets opencode talking to an OpenAI-compatible endpoint:
 
-```yaml
-opencode:
-  provider:
-    openai:
-      options:
-        apiKey: ""          # auto-injected (x-secret-source: virtual_key)
-  model: gpt-4o
-  server:
-    port: 8080
-    hostname: 0.0.0.0
+```json
+{
+  "opencode": {
+    "$schema": "https://opencode.ai/config.json",
+    "model": "litellm/qwen3.5-9b",
+    "provider": {
+      "litellm": {
+        "npm": "@ai-sdk/openai-compatible",
+        "name": "litellm",
+        "options": {
+          "baseURL": "http://10.121.166.197:4000/v1",
+          "apiKey": "KEY-PLACEHOLDER"
+        },
+        "models": {
+          "qwen3.5-9b": { "name": "qwen3.5-9b" }
+        }
+      }
+    }
+  }
+}
 ```
 
-When this package is published and the platform syncs it, the wizard shows a form with: a "Pick provider" select (with all `supported_providers.builtin` ids + "custom"), the chosen provider's `apiKey` field locked (the user can't type — they bind a virtual key in a separate widget), `model` as a free-text input, `share` as a 3-option select, and `server.port` / `server.hostname` as a nested sub-form. The "Raw YAML/JSON" toggle drops the user into a CodeMirror editor that validates against the same schema on every keystroke.
+Three details in that example are load-bearing and worth copying:
+
+- **`model` is `<providerId>/<modelId>`** — the provider id is a key of `provider`, the model id a key of that provider's `models`. It is not a bare model id. An object form (`{providerID, model, variant}`) is equally valid.
+- **`models` is mandatory for custom providers.** opencode can't discover models from an OpenAI-compatible endpoint, so each id the proxy serves has to be declared. Against a LiteLLM proxy the id is LiteLLM's `model_name` alias, not the vendor's model name.
+- **`baseURL` must include the `/v1` suffix**, and `apiKey` is a placeholder — the deploy service replaces it with the bound virtual key.
+
+A custom provider also defaults to text-only: opencode reads modalities from a built-in registry, not from `/v1/models`, so image input is stripped without error unless `models.<id>.modalities.input` declares `image`.
+
+### Legacy vs. current keys in opencode 1.19.0
+
+1.19.0 ships **both** a legacy and a modern spelling for much of its config. The binary's own normalizer migrates the legacy ones on load, so both work — but the legacy ones are on their way out, and a few are carried **without** being migrated, i.e. they silently do nothing. Verify against the binary before assuming a legacy key is live.
+
+| Legacy key | Current replacement | Migrated on load? |
+|---|---|---|
+| `provider` | `providers` | yes — field names differ too: `npm`→`package`, `options`→`settings`, `release_date`→`releaseDate`, `model`→`modelID` |
+| `agent` | `agents` | yes (stamps `mode: "primary"`) |
+| `permission`, `tools` | `permissions` (rule array) | yes — `write`/`patch` both normalize to action `edit` |
+| `snapshot` | `snapshots` | yes |
+| `share` ← `autoshare` | `share` | yes (`autoshare: true` → `"auto"`) |
+| `autoupdate` | `update` | yes |
+| `command`, `reference`, `mode`, `plugin` | `commands`, `references`, `agents`, `plugins` | yes |
+| `server`, `layout`, `attachment` | — | no current replacement |
+| **`enabled_providers`, `disabled_providers`, `small_model`, `subagent_depth`** | **none** | **no — these have no effect in 1.19.0** |
+
+The last row matters: an existing config can carry `enabled_providers` and still show every configured provider in the UI. The schema keeps these four declared (so old configs still validate) but flags them as no-ops in their descriptions, and `required` is `[model]` plus `anyOf[provider, providers]` so a modern-only config is not rejected.
+
+When this package is published and the platform syncs it, the wizard shows a form with: a "Pick provider" select (with all `supported_providers.builtin` ids + "custom"), the chosen provider's `apiKey` field locked (the user can't type — they bind a virtual key in a separate widget), `model` as a free-text input, and nested sub-forms for the provider's options and model list. The "Raw YAML/JSON" toggle drops the user into a CodeMirror editor that validates against the same schema on every keystroke.
 
 ### Worked example: `hermes-agent` 0.19.0 (multi-slot, mixed file formats)
 
@@ -432,13 +540,17 @@ When this package is published and the platform syncs it, the wizard shows a for
 
 The `hermes` slot's `model.provider` field uses `x-provider-choices-source: "hermes"` to inherit the provider list from the same slot. The `hermes-env` slot has no provider logic of its own — the dynamic `<PROVIDER>_API_KEY` env-var line is injected by the platform based on the chosen provider from the `hermes` slot.
 
-`config/example.yaml` uses `---` to separate the two slots:
+`config/example.yaml` uses `---` to separate the two slots. The `hermes` slot below is the minimum config that points hermes at a self-hosted OpenAI-compatible endpoint:
 
 ```yaml
 hermes:
   model:
-    provider: openai
-    default: gpt-4o
+    provider: custom:litellm
+    default: qwen3.5-9b
+  custom_providers:
+    - name: litellm
+      base_url: "http://GATEWAY-IP:4000/v1"
+      api_key: "KEY-PLACEHOLDER"
 
 ---
 
@@ -447,12 +559,19 @@ hermes-env:
   HERMES_OPENROUTER_CACHE: false
 ```
 
+Two details in that example are load-bearing:
+
+- **`custom:<name>` must resolve.** `model.provider: custom:litellm` is a reference into `custom_providers`, matched on the entry's `name`. Hermes silently drops any entry missing `name` **or** `base_url`, and the provider then fails to resolve — so the schema marks both required on every entry.
+- **`custom_providers` and `providers` are the same thing.** The first is a list (legacy on-disk form), the second a map keyed by provider id; hermes normalizes both to one runtime shape and reads whichever is present. The schema types both, and `providers.<name>.enabled: false` hides an entry from the resolver rather than deleting it.
+
+`model` itself is `oneOf` a bare string or an object — hermes canonicalizes `"qwen3.5-9b"` into `{default: "qwen3.5-9b"}` on load, so the two spellings are equivalent.
+
 The in-VM `render-config.sh` knows each slot's file format (from `manifest.configs[].file` extension / name): the `hermes` slot writes YAML via `yq`, the `hermes-env` slot writes `KEY=VALUE` lines via plain `printf`.
 
 ### See also
 
-- `agents/opencode/upstream/1.19.0/config/` — full single-slot example
-- `agents/openclaw/upstream/2026.7.1-2/config/` — full single-slot example (different shape)
-- `agents/hermes-agent/upstream/0.19.0/config/` — full multi-slot, mixed-format example
-- `internal/manifest/manifest.go::ConfigSpec` — the Go type for the legacy `configs[].required_inputs/optional_inputs` shape (still the VM's `render-config.sh` contract during the transition)
-- `internal/manifest/manifest.go::InputField` — the Go type for a single legacy field (still drives the platform's typed-form fallback when `config_schemas_status = "missing"`)
+- `agents/opencode/upstream/1.19.0/config/` — full single-slot example (`example.json`)
+- `agents/openclaw/upstream/2026.7.1-2/config/` — full single-slot example, JSON-rendered (`example.json`)
+- `agents/hermes-agent/upstream/0.19.0/config/` — full multi-slot, mixed-format example (`example.yaml`)
+- `internal/manifest/manifest.go::ConfigSpec` — the Go type for the delivery contract in `configs[]`
+- `internal/cli/config.go::slotEnvVars` — splits the config payload into the `MARKETPLACE_CONFIG_<SLOT>` env vars the render scripts consume

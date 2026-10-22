@@ -50,11 +50,17 @@ func NewConfigGenerateCmd(cfgPath, credsPath *string) *cobra.Command {
 		Use:   "generate <agent> --config-input <file>",
 		Short: "Render the agent's configuration files using its render-config.sh",
 		Long: `generate downloads an agent's tarball (caching it like install
-does), extracts the embedded render-config.sh, and invokes it with
-$AGENT_MARKETPLACE_CONFIG_INPUT pointing at the daemon-supplied config
-input file. The render script writes the agent's config file(s) to the
-upstream-canonical locations declared in manifest.configs[].render_to
-(typically under ~/.config/ — e.g. ~/.config/opencode/opencode.json).
+does), extracts the embedded render-config.sh, and invokes it.
+
+--config-input points at the daemon-supplied config payload: a slot-keyed JSON
+object whose top-level keys are manifest.configs[].name — the same shape as
+the agent's config/example.* file, so a raw-mode frontend can submit its edited
+example unchanged. agentpkg splits it per slot, base64-encodes each slot BODY
+(not the wrapper), and exports MARKETPLACE_CONFIG_<SLOT> for each, where
+<SLOT> is the uppercased slot name with '-' → '_' (hermes-agent's "hermes-env"
+becomes MARKETPLACE_CONFIG_HERMES_ENV). The render script decodes its slot and
+writes those bytes verbatim to manifest.configs[].render_to (typically under
+~/.config/ — e.g. ~/.config/opencode/opencode.json) with the declared mode.
 agentpkg does not choose the path itself.
 
 Exit codes:
