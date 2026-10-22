@@ -2,6 +2,8 @@ package server
 
 import (
 	"net/http"
+	"path"
+	"strings"
 
 	"github.com/VMware-AI/agent-marketplace-packages/internal/apitypes"
 	"github.com/go-chi/chi/v5"
@@ -194,4 +196,111 @@ func findTarball(s *State, name, source, version string) (apitypes.TarballRef, b
 		}
 	}
 	return apitypes.TarballRef{}, false
+}
+
+// findVersionConfig returns the index's ConfigFiles entry for one
+// (name, source, version), and the tarball filename the staged files are keyed
+// by. ok is false when the version is unknown OR when it ships no config/
+// directory (which is a legitimate state — the caller renders a 404 with a
+// distinct code so the client can tell "no such agent version" from "this
+// version has no schema").
+func findVersionConfig(s *State, name, source, version string) (apitypes.ConfigFiles, string, bool, bool) {
+	for _, a := range s.Index().Agents {
+		if a.Name != name {
+			continue
+		}
+		for _, v := range a.Versions {
+			if v.Source != source || v.Version != version {
+				continue
+			}
+			tarName := v.Tarball.Filename
+			if v.Config == nil {
+				return apitypes.ConfigFiles{}, tarName, false, true
+			}
+			return *v.Config, tarName, true, true
+		}
+		break
+	}
+	return apitypes.ConfigFiles{}, "", false, false
+}
+
+// HandleConfigSchemaFile serves the agent's config/schema.json — the draft-07
+// JSON Schema describing the shape of every config slot. This is what the
+// deploy wizard's form renderer consumes; the schema's top-level keys are the
+// slot names and must match manifest configs[].name.
+func HandleConfigSchemaFile(s *State) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if s.Index() == nil || s.Dist == nil {
+			writeError(w, http.StatusServiceUnavailable, "no_index", "index.json not loaded yet")
+			return
+		}
+		name := chi.URLParam(r, "name")
+		source := chi.URLParam(r, "source")
+		version := chi.URLParam(r, "version")
+		cfgs, tarName, hasConfig, found := findVersionConfig(s, name, source, version)
+		if !found {
+			writeError(w, http.StatusNotFound, "not_found",
+				"agent/source/version not found: "+name+"/"+source+"/"+version)
+			return
+		}
+		if !hasConfig || cfgs.Schema == "" {
+			writeError(w, http.StatusNotFound, "no_config_schema",
+				"no config/schema.json for "+name+"/"+source+"/"+version+
+					" (config status: "+configStatusOrMissing(cfgs, hasConfig)+")")
+			return
+		}
+		path := s.Dist.ConfigFilePath(tarName, "schema.json")
+		w.Header().Set("Content-Type", "application/json")
+		http.ServeFile(w, r, path)
+	}
+}
+
+// HandleConfigExampleFile serves the agent's config/example.* verbatim, in
+// whatever format it was authored — opencode/openclaw ship example.json,
+// hermes-agent ships example.yaml. The frontend renders it as-is in its raw
+// editor, so the bytes must not be transformed or re-encoded.
+func HandleConfigExampleFile(s *State) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if s.Index() == nil || s.Dist == nil {
+			writeError(w, http.StatusServiceUnavailable, "no_index", "index.json not loaded yet")
+			return
+		}
+		name := chi.URLParam(r, "name")
+		source := chi.URLParam(r, "source")
+		version := chi.URLParam(r, "version")
+		cfgs, tarName, hasConfig, found := findVersionConfig(s, name, source, version)
+		if !found {
+			writeError(w, http.StatusNotFound, "not_found",
+				"agent/source/version not found: "+name+"/"+source+"/"+version)
+			return
+		}
+		if !hasConfig || cfgs.Example == "" {
+			writeError(w, http.StatusNotFound, "no_config_example",
+				"no config/example.* for "+name+"/"+source+"/"+version+
+					" (config status: "+configStatusOrMissing(cfgs, hasConfig)+")")
+			return
+		}
+		// Serve with the format the agent actually ships, so a raw editor can
+		// treat it as YAML or JSON without sniffing. The filename is the
+		// basename of the indexed path.
+		filename := path.Base(cfgs.Example)
+		contentType := "application/yaml"
+		if strings.HasSuffix(filename, ".json") {
+			contentType = "application/json"
+		}
+		w.Header().Set("Content-Type", contentType)
+		http.ServeFile(w, r, s.Dist.ConfigFilePath(tarName, filename))
+	}
+}
+
+// configStatusOrMissing renders the status string for an error message when
+// the index entry is absent (version ships no config/ at all).
+func configStatusOrMissing(cfgs apitypes.ConfigFiles, hasConfig bool) string {
+	if !hasConfig {
+		return apitypes.ConfigStatusMissing
+	}
+	if cfgs.Status == "" {
+		return apitypes.ConfigStatusMissing
+	}
+	return cfgs.Status
 }

@@ -244,6 +244,9 @@
           },
           "manifest": {
             "$ref": "#/components/schemas/Manifest"
+          },
+          "config": {
+            "$ref": "#/components/schemas/ConfigFiles"
           }
         }
       },
@@ -858,6 +861,37 @@
           "sha256": {
             "type": "string",
             "description": "sha256:<hex>"
+          }
+        }
+      },
+      "ConfigFiles": {
+        "type": "object",
+        "description": "Location of a version's config-contract files within dist/, plus whether its schema is usable. `status` drives the wizard's mode: \"ok\" renders a schema-driven form for every slot, \"partial\" only for schema'd slots, \"missing\" leaves the version raw-only.",
+        "properties": {
+          "schema": {
+            "type": "string",
+            "description": "dist-relative path to config/schema.json. Absent when the version ships none."
+          },
+          "example": {
+            "type": "string",
+            "description": "dist-relative path to config/example.json or config/example.yaml, served verbatim by /config/example."
+          },
+          "example_format": {
+            "type": "string",
+            "enum": [
+              "json",
+              "yaml"
+            ],
+            "description": "Format of the example file, so a client can pick an editor mode without an extra request."
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "missing",
+              "partial",
+              "ok"
+            ],
+            "description": "Config-schema availability for this version."
           }
         }
       }
@@ -1664,6 +1698,84 @@
           },
           "503": {
             "$ref": "#/components/responses/ServiceUnavailable"
+          }
+        }
+      }
+    },
+    "/api/v1/agents/{name}/{source}/{version}/config/schema": {
+      "get": {
+        "tags": [
+          "artifacts"
+        ],
+        "summary": "Get the config schema for one version (drives the form renderer).",
+        "description": "Returns the agent's `config/schema.json` verbatim — a draft-07 JSON Schema whose top-level keys are the config slot names, matching `manifest.configs[].name`. The deploy wizard renders a form from it; a raw-mode client validates user input against it.\n\n404 with code `no_config_schema` when the version ships no schema (the client then offers a raw editor only).",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/AgentName"
+          },
+          {
+            "$ref": "#/components/parameters/Source"
+          },
+          {
+            "$ref": "#/components/parameters/Version"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "string",
+                  "description": "The JSON Schema document, served byte-for-byte."
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          }
+        }
+      }
+    },
+    "/api/v1/agents/{name}/{source}/{version}/config/example": {
+      "get": {
+        "tags": [
+          "artifacts"
+        ],
+        "summary": "Get the config example for one version (seeds the raw editor).",
+        "description": "Returns the agent's `config/example.*` verbatim, in whatever format it was authored: `application/json` for agents whose config file is JSON (opencode, openclaw), `application/yaml` for hermes-agent. Bytes are never transformed — the frontend renders them as-is and submits the edited text back as the config payload.",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/AgentName"
+          },
+          {
+            "$ref": "#/components/parameters/Source"
+          },
+          {
+            "$ref": "#/components/parameters/Version"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "string",
+                  "description": "The example document, served byte-for-byte."
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
           }
         }
       }

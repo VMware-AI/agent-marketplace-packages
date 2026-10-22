@@ -251,6 +251,33 @@ func (d *Dir) SkillSHA256Path(filename string) string {
 	return d.SkillZipPath(filename + ".sha256")
 }
 
+const configDirName = "config"
+
+// ConfigDirPath returns the absolute path to dist/config/ — where the
+// per-version config/schema.json + config/example.* files are copied out of
+// each tarball at build time so the API can serve them without unpacking.
+//
+// The per-version subdirectory is ConfigVersionPath.
+func (d *Dir) ConfigDirPath() string {
+	return filepath.Join(d.Path, configDirName)
+}
+
+// ConfigVersionPath returns the absolute path to one version's config
+// directory, e.g. dist/config/opencode-upstream-1.19.0/.
+//
+// The directory name is derived from the tarball name (minus the .tar.gz
+// suffix) so it is unique per agent/source/version without needing the
+// manifest's fields.
+func (d *Dir) ConfigVersionPath(tarballName string) string {
+	return filepath.Join(d.ConfigDirPath(), strings.TrimSuffix(tarballName, ".tar.gz"))
+}
+
+// ConfigFilePath returns the absolute path of a single config-contract file
+// (schema.json or example.*) for one version.
+func (d *Dir) ConfigFilePath(tarballName, filename string) string {
+	return filepath.Join(d.ConfigVersionPath(tarballName), filename)
+}
+
 // ListSkillZips returns all *.zip filenames under dist/skills/, sorted.
 // Returns an empty slice (not an error) if dist/skills/ does not yet exist —
 // that's the normal "no skills uploaded yet" state.
