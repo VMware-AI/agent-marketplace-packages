@@ -87,30 +87,17 @@ type ServiceSpec struct {
 	Description string   `json:"description,omitempty"`
 }
 
-// ConfigSpec mirrors internal/manifest.ConfigSpec. The RequiredInputs /
-// OptionalInputs / SupportedProviders fields expose the manifest-driven
-// config schema so external clients (daemon, Control UI) can introspect
-// what fields each version expects without parsing manifest.json.
+// ConfigSpec mirrors internal/manifest.ConfigSpec — the delivery contract for
+// one config file. The shape contract (which fields the rendered file may
+// contain) lives in the agent's config/schema.json, served separately by the
+// /config/schema endpoint. `Name` must match a top-level key in that schema's
+// `properties`.
 type ConfigSpec struct {
-	Name               string                `json:"name"`
-	File               string                `json:"file"`
-	RenderTo           string                `json:"render_to"`
-	Mode               string                `json:"mode"`
-	RequiredInputs     []InputField          `json:"required_inputs,omitempty"`
-	OptionalInputs     map[string]InputField `json:"optional_inputs,omitempty"`
-	SupportedProviders *SupportedProviders   `json:"supported_providers,omitempty"`
-}
-
-// InputField is one input declared by an agent's manifest. See
-// internal/manifest.InputField for the field semantics.
-type InputField struct {
-	InputKey       string   `json:"input_key,omitempty"`
-	JsonPath       string   `json:"json_path"`
-	Type           string   `json:"type"`
-	RequiredWhen   string   `json:"required_when,omitempty"`
-	EnumValues     []string `json:"enum_values,omitempty"`
-	Validate       string   `json:"validate,omitempty"`
-	DynamicResolve string   `json:"dynamic_resolve,omitempty"`
+	Name               string              `json:"name"`
+	File               string              `json:"file"`
+	RenderTo           string              `json:"render_to"`
+	Mode               string              `json:"mode"`
+	SupportedProviders *SupportedProviders `json:"supported_providers,omitempty"`
 }
 
 // SupportedProviders mirrors internal/manifest.SupportedProviders.

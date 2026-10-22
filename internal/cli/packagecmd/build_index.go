@@ -306,18 +306,9 @@ func convertManifest(m *manifest.Manifest) apitypes.Manifest {
 			RenderTo: c.RenderTo,
 			Mode:     c.Mode,
 		}
-		// Project admin-layer schema so daemons can introspect what
-		// fields they need to supply for `agentpkg config generate`.
-		// Schema 1.0 manifests have nil slices/maps here; that's fine.
-		for _, ri := range c.RequiredInputs {
-			apitypesCfg.RequiredInputs = append(apitypesCfg.RequiredInputs, inputFieldToAPI(ri))
-		}
-		if len(c.OptionalInputs) > 0 {
-			apitypesCfg.OptionalInputs = make(map[string]apitypes.InputField, len(c.OptionalInputs))
-			for k, oi := range c.OptionalInputs {
-				apitypesCfg.OptionalInputs[k] = inputFieldToAPI(oi)
-			}
-		}
+		// Only the provider catalog is projected here. The per-field shape
+		// contract lives in the agent's config/schema.json (served by
+		// /config/schema), not in the manifest.
 		if c.SupportedProviders != nil {
 			apitypesCfg.SupportedProviders = &apitypes.SupportedProviders{}
 			for _, bp := range c.SupportedProviders.Builtin {
@@ -340,24 +331,6 @@ func convertManifest(m *manifest.Manifest) apitypes.Manifest {
 	return out
 }
 
-// inputFieldToAPI maps internal/manifest.InputField →
-// apitypes.InputField. Both structs use the same JSON tags so a
-// shallow copy is sufficient for the value-semantics fields; we use
-// append-slice copy for EnumValues to avoid aliasing.
-func inputFieldToAPI(in manifest.InputField) apitypes.InputField {
-	out := apitypes.InputField{
-		InputKey:       in.InputKey,
-		JsonPath:       in.JsonPath,
-		Type:           in.Type,
-		RequiredWhen:   in.RequiredWhen,
-		Validate:       in.Validate,
-		DynamicResolve: in.DynamicResolve,
-	}
-	if len(in.EnumValues) > 0 {
-		out.EnumValues = append([]string(nil), in.EnumValues...)
-	}
-	return out
-}
 
 // findFileInTarball scans the entire tarball and returns the contents of
 // the FIRST regular file whose base name matches `wantBase` (e.g.

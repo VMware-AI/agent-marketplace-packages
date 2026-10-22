@@ -523,49 +523,8 @@
           "mode": {
             "type": "string"
           },
-          "required_inputs": {
-            "type": "array",
-            "items": {
-              "$ref": "#/components/schemas/InputField"
-            }
-          },
-          "optional_inputs": {
-            "type": "object",
-            "additionalProperties": {
-              "$ref": "#/components/schemas/InputField"
-            }
-          },
           "supported_providers": {
             "$ref": "#/components/schemas/SupportedProviders"
-          }
-        }
-      },
-      "InputField": {
-        "type": "object",
-        "properties": {
-          "input_key": {
-            "type": "string"
-          },
-          "json_path": {
-            "type": "string"
-          },
-          "type": {
-            "type": "string"
-          },
-          "required_when": {
-            "type": "string"
-          },
-          "enum_values": {
-            "type": "array",
-            "items": {
-              "type": "string"
-            }
-          },
-          "validate": {
-            "type": "string"
-          },
-          "dynamic_resolve": {
-            "type": "string"
           }
         }
       },
@@ -657,7 +616,11 @@
             }
           }
         },
-        "required": ["name", "description", "category"]
+        "required": [
+          "name",
+          "description",
+          "category"
+        ]
       },
       "SkillStripped": {
         "type": "object",
@@ -700,7 +663,9 @@
             }
           }
         },
-        "required": ["category"]
+        "required": [
+          "category"
+        ]
       },
       "SkillVersion": {
         "type": "object",
@@ -747,13 +712,23 @@
             "description": "Schema v2.0: runtimes that recognize this skill payload. ['all'] for system-wide installs.",
             "items": {
               "type": "string",
-              "enum": ["opencode", "openclaw", "hermes", "all"]
+              "enum": [
+                "opencode",
+                "openclaw",
+                "hermes",
+                "all"
+              ]
             }
           },
           "install_method": {
             "type": "string",
             "description": "Schema v2.0: install pipeline used by agentpkg skills install.",
-            "enum": ["zip-extract", "pip-wheel", "npm-pack", "tarball"],
+            "enum": [
+              "zip-extract",
+              "pip-wheel",
+              "npm-pack",
+              "tarball"
+            ],
             "default": "zip-extract"
           },
           "install_paths": {
@@ -776,7 +751,10 @@
             "description": "Full SKILL.md text (frontmatter + body) embedded for UI convenience"
           }
         },
-        "required": ["agents", "install_method"]
+        "required": [
+          "agents",
+          "install_method"
+        ]
       },
       "SkillVersionStripped": {
         "type": "object",
