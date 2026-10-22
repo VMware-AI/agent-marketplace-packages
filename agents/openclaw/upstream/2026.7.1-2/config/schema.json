@@ -2,60 +2,21 @@
   "$schema": "http://json-schema.org/draft-07/schema#",
   "$id": "https://agent-marketplace-packages/agents/openclaw/2026.7.1-2/config/schema.json",
   "title": "openclaw",
-  "description": "openclaw 2026.7.1-2 — openclaw gateway daemon (openclaw.ai). Renders to ~/.openclaw/openclaw.json (mode 0600). The `openclaw` slot is the single config block.",
+  "description": "openclaw 2026.7.1-2 — openclaw gateway daemon (openclaw.ai). Renders to ~/.openclaw/openclaw.json (mode 0600). The `openclaw` slot is the single config block. Shapes are transcribed from the agent's own vendored type definitions (ModelProviderConfig, AgentDefaultsConfig, GatewayConfig) under payload/openclaw/lib/node_modules/openclaw/dist/.",
   "type": "object",
   "additionalProperties": true,
   "properties": {
     "openclaw": {
       "type": "object",
-      "description": "openclaw config block. The provider structure mirrors opencode's: a map keyed by provider id, with the chosen provider's block under `models.providers.<chosen>`.",
+      "description": "openclaw config block (the body of openclaw.json). `models.providers` is a map keyed by provider id (the chosen id from supported_providers.builtin + 'custom'); the chosen provider's options (apiKey, baseUrl) are nested under models.providers.<chosen>.",
       "additionalProperties": true,
       "required": ["models", "agents"],
       "properties": {
-        "models": {
-          "type": "object",
-          "description": "Model and provider configuration.",
-          "additionalProperties": true,
-          "properties": {
-            "providers": {
-              "type": "object",
-              "description": "Provider map keyed by provider id. The form renders this as a 'pick provider + fill options' widget driven by `x-provider-choices` (server-stamped from manifest.configs[].supported_providers).",
-              "minProperties": 1,
-              "additionalProperties": {
-                "type": "object",
-                "additionalProperties": true,
-                "properties": {
-                  "baseUrl": {
-                    "type": "string",
-                    "description": "Base URL for custom OpenAI-compatible providers. Required when the chosen provider is `custom`.",
-                    "format": "uri"
-                  },
-                  "localService": {
-                    "type": "object",
-                    "description": "Local service config (custom providers). `command` is the npm package or binary the daemon shells out to.",
-                    "additionalProperties": true,
-                    "properties": {
-                      "command": {
-                        "type": "string",
-                        "description": "Command / npm package to run for the local service."
-                      }
-                    }
-                  },
-                  "apiKey": {
-                    "type": "string",
-                    "format": "password",
-                    "description": "API key for the provider. Auto-injected from the bound virtual key at deploy time — leave empty.",
-                    "x-secret-source": "virtual_key"
-                  }
-                }
-              }
-            }
-          }
-        },
         "agents": {
           "type": "object",
           "description": "Agent runtime settings.",
           "additionalProperties": true,
+          "required": ["defaults"],
           "properties": {
             "defaults": {
               "type": "object",
@@ -63,12 +24,328 @@
               "additionalProperties": true,
               "properties": {
                 "model": {
-                  "type": "object",
-                  "additionalProperties": true,
-                  "properties": {
-                    "primary": {
+                  "description": "Primary model as `<providerId>/<modelId>` — the provider id is a key of models.providers, the model id a key of that provider's `models` array (e.g. 'openai/minimax'). Either the bare string, or an object with `primary` + ordered `fallbacks`.",
+                  "oneOf": [
+                    {
                       "type": "string",
-                      "description": "Primary model id (e.g. 'gpt-4o', 'claude-sonnet-4-5')."
+                      "examples": ["openai/minimax", "anthropic/claude-sonnet-4-5", "openai/gpt-4o"]
+                    },
+                    {
+                      "type": "object",
+                      "additionalProperties": true,
+                      "properties": {
+                        "primary": {
+                          "type": "string",
+                          "description": "Primary model ref, same `<providerId>/<modelId>` format as the bare-string form."
+                        },
+                        "fallbacks": {
+                          "type": "array",
+                          "items": { "type": "string" },
+                          "description": "Ordered fallback model refs, tried in order when the primary fails."
+                        }
+                      }
+                    }
+                  ]
+                },
+                "smallModel": {
+                  "description": "Lower-cost model for short internal tasks (e.g. generated session titles). Same shape as `model`.",
+                  "oneOf": [
+                    { "type": "string" },
+                    {
+                      "type": "object",
+                      "additionalProperties": true,
+                      "properties": {
+                        "primary": { "type": "string" },
+                        "fallbacks": { "type": "array", "items": { "type": "string" } }
+                      }
+                    }
+                  ]
+                },
+                "models": {
+                  "type": "object",
+                  "description": "Model catalog with optional aliases, keyed by full `<providerId>/<modelId>` ref.",
+                  "additionalProperties": {
+                    "type": "object",
+                    "additionalProperties": true,
+                    "properties": {
+                      "alias": { "type": "string" },
+                      "streaming": { "type": "boolean" },
+                      "params": { "type": "object", "additionalProperties": true }
+                    }
+                  }
+                },
+                "params": {
+                  "type": "object",
+                  "description": "Global default provider params applied to all models before per-model and per-agent overrides.",
+                  "additionalProperties": true
+                },
+                "cwd": {
+                  "type": "string",
+                  "description": "Agent working directory (preferred). Used as the default cwd for agent runs."
+                },
+                "repoRoot": {
+                  "type": "string",
+                  "description": "Repository root used when resolving agent workspaces."
+                }
+              }
+            }
+          }
+        },
+        "models": {
+          "type": "object",
+          "description": "Model and provider configuration.",
+          "additionalProperties": true,
+          "required": ["providers"],
+          "properties": {
+            "mode": {
+              "type": "string",
+              "enum": ["merge", "replace"],
+              "description": "Whether `providers` merges with the bundled provider catalogs (`merge`) or replaces them entirely (`replace`). Use `replace` for a self-contained config pointed at your own proxy.",
+              "default": "merge"
+            },
+            "pricing": {
+              "type": "object",
+              "description": "Pricing enrichment settings.",
+              "additionalProperties": true,
+              "properties": {
+                "enabled": { "type": "boolean" }
+              }
+            },
+            "providers": {
+              "type": "object",
+              "description": "Provider map keyed by provider id. The form renders this as a 'pick provider + fill options' widget driven by `x-provider-choices` (server-stamped from manifest.configs[].supported_providers).",
+              "minProperties": 1,
+              "additionalProperties": {
+                "type": "object",
+                "additionalProperties": true,
+                "required": ["baseUrl", "models"],
+                "properties": {
+                  "api": {
+                    "type": "string",
+                    "enum": [
+                      "openai-completions",
+                      "openai-responses",
+                      "openai-chatgpt-responses",
+                      "anthropic-messages",
+                      "google-generative-ai",
+                      "google-vertex",
+                      "github-copilot",
+                      "bedrock-converse-stream",
+                      "ollama",
+                      "azure-openai-responses"
+                    ],
+                    "description": "Default API adapter for models under this provider. An OpenAI-compatible proxy uses `openai-completions`.",
+                    "default": "openai-completions"
+                  },
+                  "baseUrl": {
+                    "type": "string",
+                    "description": "Provider API base URL. Must include the `/v1` suffix for OpenAI-compatible endpoints.",
+                    "format": "uri"
+                  },
+                  "apiKey": {
+                    "description": "API key or SecretRef for this provider. Auto-injected from the bound virtual key at deploy time — leave the placeholder; the deploy service substitutes the real key.",
+                    "oneOf": [
+                      {
+                        "type": "string",
+                        "format": "password",
+                        "x-secret-source": "virtual_key"
+                      },
+                      {
+                        "type": "object",
+                        "description": "Structured secret reference, for keys held in an external secret provider.",
+                        "additionalProperties": true,
+                        "required": ["source", "provider", "id"],
+                        "properties": {
+                          "source": { "type": "string" },
+                          "provider": { "type": "string" },
+                          "id": { "type": "string" }
+                        }
+                      }
+                    ]
+                  },
+                  "auth": {
+                    "type": "string",
+                    "enum": ["api-key", "aws-sdk", "oauth", "token"],
+                    "description": "How credentials for this provider are resolved. `api-key` is the normal case; `aws-sdk` uses the AWS credential chain; `oauth` runs an interactive login."
+                  },
+                  "contextWindow": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "description": "Provider-level default context window in tokens."
+                  },
+                  "contextTokens": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "description": "Provider-level effective runtime context cap (session budgeting). Keeps contextWindow metadata intact while preferring a smaller practical window."
+                  },
+                  "maxTokens": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "description": "Provider-level default max output tokens."
+                  },
+                  "timeoutSeconds": {
+                    "type": "number",
+                    "exclusiveMinimum": 0,
+                    "description": "Provider request timeout in seconds."
+                  },
+                  "region": {
+                    "type": "string",
+                    "description": "Provider deployment/API region, for provider plugins that expose regional endpoints."
+                  },
+                  "params": {
+                    "type": "object",
+                    "description": "Provider-specific runtime parameters, interpreted by provider plugins.",
+                    "additionalProperties": true
+                  },
+                  "headers": {
+                    "type": "object",
+                    "description": "Secret-bearing headers merged into provider requests.",
+                    "additionalProperties": {
+                      "type": "string",
+                      "format": "password"
+                    }
+                  },
+                  "authHeader": {
+                    "type": "boolean",
+                    "description": "Whether default Authorization header injection is enabled."
+                  },
+                  "injectNumCtxForOpenAICompat": {
+                    "type": "boolean",
+                    "description": "Inject the `num_ctx` parameter for OpenAI-compatible endpoints that need it."
+                  },
+                  "localService": {
+                    "type": "object",
+                    "description": "A process started before calling this provider (e.g. a local model server).",
+                    "additionalProperties": true,
+                    "required": ["command"],
+                    "properties": {
+                      "command": {
+                        "type": "string",
+                        "description": "Executable started before model requests are sent."
+                      },
+                      "args": {
+                        "type": "array",
+                        "items": { "type": "string" },
+                        "description": "Arguments passed without shell expansion."
+                      },
+                      "cwd": { "type": "string" },
+                      "env": {
+                        "type": "object",
+                        "additionalProperties": { "type": "string" }
+                      },
+                      "healthUrl": {
+                        "type": "string",
+                        "description": "Health endpoint polled before the provider is considered ready."
+                      },
+                      "readyTimeoutMs": { "type": "integer", "minimum": 1 },
+                      "idleStopMs": { "type": "integer", "minimum": 1 }
+                    }
+                  },
+                  "models": {
+                    "type": "array",
+                    "description": "Model catalog this provider serves. openclaw cannot discover models from an OpenAI-compatible endpoint, so each id the proxy serves is declared here — against a LiteLLM proxy the `id` is LiteLLM's `model_name` alias, not the vendor's model name. This is an ARRAY, unlike opencode's `models` map.",
+                    "minItems": 1,
+                    "items": {
+                      "type": "object",
+                      "additionalProperties": true,
+                      "required": ["id", "name"],
+                      "properties": {
+                        "id": {
+                          "type": "string",
+                          "description": "Provider-facing model id."
+                        },
+                        "name": {
+                          "type": "string",
+                          "description": "Human-readable display name."
+                        },
+                        "api": {
+                          "type": "string",
+                          "enum": [
+                            "openai-completions",
+                            "openai-responses",
+                            "openai-chatgpt-responses",
+                            "anthropic-messages",
+                            "google-generative-ai",
+                            "google-vertex",
+                            "github-copilot",
+                            "bedrock-converse-stream",
+                            "ollama",
+                            "azure-openai-responses"
+                          ],
+                          "description": "Per-model API adapter override."
+                        },
+                        "baseUrl": {
+                          "type": "string",
+                          "description": "Per-model base URL override.",
+                          "format": "uri"
+                        },
+                        "reasoning": {
+                          "type": "boolean",
+                          "description": "Whether the model supports reasoning/thinking controls."
+                        },
+                        "input": {
+                          "type": "array",
+                          "items": {
+                            "type": "string",
+                            "enum": ["text", "image", "video", "audio"]
+                          },
+                          "description": "Supported input modalities, used for routing and media-tool selection. Declare `image` here or image attachments are silently dropped."
+                        },
+                        "cost": {
+                          "type": "object",
+                          "description": "Token pricing in USD per million tokens.",
+                          "additionalProperties": true,
+                          "required": ["input", "output", "cacheRead", "cacheWrite"],
+                          "properties": {
+                            "input": { "type": "number", "minimum": 0 },
+                            "output": { "type": "number", "minimum": 0 },
+                            "cacheRead": { "type": "number", "minimum": 0 },
+                            "cacheWrite": { "type": "number", "minimum": 0 }
+                          }
+                        },
+                        "contextWindow": {
+                          "type": "integer",
+                          "minimum": 1,
+                          "description": "Provider/native maximum context window in tokens."
+                        },
+                        "contextTokens": {
+                          "type": "integer",
+                          "minimum": 1,
+                          "description": "Effective runtime cap used for compaction/session budgeting."
+                        },
+                        "maxTokens": {
+                          "type": "integer",
+                          "minimum": 1,
+                          "description": "Maximum completion/output token budget."
+                        },
+                        "thinkingLevelMap": {
+                          "type": "object",
+                          "description": "Maps openclaw thinking levels to provider/model-specific values.",
+                          "additionalProperties": true
+                        },
+                        "params": {
+                          "type": "object",
+                          "additionalProperties": true
+                        },
+                        "headers": {
+                          "type": "object",
+                          "additionalProperties": { "type": "string" }
+                        },
+                        "compat": {
+                          "type": "object",
+                          "description": "Provider compatibility flags for payload shaping and feature gating.",
+                          "additionalProperties": true
+                        },
+                        "mediaInput": {
+                          "type": "object",
+                          "description": "Media input limits used by routing and preflight compression.",
+                          "additionalProperties": true
+                        },
+                        "streaming": {
+                          "type": "boolean",
+                          "description": "Enable streaming for this model."
+                        }
+                      }
                     }
                   }
                 }
@@ -88,18 +365,28 @@
             },
             "bind": {
               "type": "string",
-              "enum": ["auto", "loopback", "lan", "tailnet", "custom"],
+              "enum": ["auto", "lan", "loopback", "tailnet", "custom"],
               "description": "Network bind mode. `loopback` = 127.0.0.1; `lan` = 0.0.0.0; `tailnet` = Tailscale interface; `custom` = free-form."
             },
             "port": {
               "type": "integer",
               "minimum": 1,
               "maximum": 65535,
-              "description": "TCP port the gateway binds to (default 8080)."
+              "description": "TCP port the gateway binds to."
+            },
+            "trustedProxies": {
+              "type": "array",
+              "items": { "type": "string" },
+              "description": "IPs of trusted reverse proxies (e.g. Traefik, nginx). When a connection arrives from one of these IPs, the gateway trusts `x-forwarded-for` to determine the client IP for local pairing and HTTP checks. Set this when the gateway sits behind a load balancer — otherwise clients all appear to originate from the proxy."
+            },
+            "allowRealIpFallback": {
+              "type": "boolean",
+              "description": "Allow `x-real-ip` as a fallback only when `x-forwarded-for` is missing. Default false (safer fail-closed behavior).",
+              "default": false
             },
             "auth": {
               "type": "object",
-              "description": "Authentication settings for the gateway.",
+              "description": "Gateway authentication. Defaults to `token` when unset.",
               "additionalProperties": true,
               "properties": {
                 "mode": {
@@ -108,31 +395,76 @@
                   "description": "Auth mode. `none` is dev-only; `token` / `password` are user-facing; `trusted-proxy` defers to an upstream proxy."
                 },
                 "token": {
-                  "type": "string",
-                  "format": "password",
-                  "description": "Static auth token (mode=token).",
-                  "x-secret-source": "user_input"
+                  "description": "Shared token for `token` mode. Auto-generated unless set explicitly.",
+                  "oneOf": [
+                    {
+                      "type": "string",
+                      "format": "password",
+                      "x-secret-source": "user_input"
+                    },
+                    {
+                      "type": "object",
+                      "description": "Structured secret reference, for a token held in an external secret provider.",
+                      "additionalProperties": true,
+                      "required": ["source", "provider", "id"],
+                      "properties": {
+                        "source": { "type": "string" },
+                        "provider": { "type": "string" },
+                        "id": { "type": "string" }
+                      }
+                    }
+                  ]
                 },
                 "password": {
-                  "type": "string",
-                  "format": "password",
-                  "description": "Auth password (mode=password).",
-                  "x-secret-source": "user_input"
+                  "description": "Shared password for `password` mode (prefer an env-backed SecretRef over a literal).",
+                  "oneOf": [
+                    {
+                      "type": "string",
+                      "format": "password",
+                      "x-secret-source": "user_input"
+                    },
+                    {
+                      "type": "object",
+                      "additionalProperties": true,
+                      "required": ["source", "provider", "id"],
+                      "properties": {
+                        "source": { "type": "string" },
+                        "provider": { "type": "string" },
+                        "id": { "type": "string" }
+                      }
+                    }
+                  ]
                 },
                 "allowTailscale": {
                   "type": "boolean",
-                  "description": "Allow Tailscale identity header to skip auth."
+                  "description": "Allow Tailscale identity headers when serve mode is enabled."
+                },
+                "rateLimit": {
+                  "type": "object",
+                  "description": "Rate-limit configuration for failed authentication attempts.",
+                  "additionalProperties": true,
+                  "properties": {
+                    "maxAttempts": { "type": "integer", "minimum": 1 },
+                    "windowMs": { "type": "integer", "minimum": 1 },
+                    "lockoutMs": { "type": "integer", "minimum": 1 },
+                    "exemptLoopback": { "type": "boolean" }
+                  }
+                },
+                "trustedProxy": {
+                  "type": "object",
+                  "description": "Trusted-proxy auth configuration. Required when mode is `trusted-proxy`.",
+                  "additionalProperties": true
                 }
               }
             },
             "controlUi": {
               "type": "object",
-              "description": "Web control UI settings.",
+              "description": "Control UI settings.",
               "additionalProperties": true,
               "properties": {
                 "enabled": {
                   "type": "boolean",
-                  "description": "Serve the web UI."
+                  "description": "Serve the control UI."
                 },
                 "basePath": {
                   "type": "string",
@@ -156,6 +488,19 @@
                   "description": "Reload mode. `hot` applies changes without dropping connections; `restart` restarts the gateway; `off` disables reload."
                 }
               }
+            },
+            "tailscale": {
+              "type": "object",
+              "description": "Tailscale exposure settings for the control UI.",
+              "additionalProperties": true,
+              "properties": {
+                "mode": {
+                  "type": "string",
+                  "enum": ["off", "serve", "funnel"],
+                  "description": "Tailscale exposure mode for the Gateway control UI."
+                },
+                "serviceName": { "type": "string" }
+              }
             }
           }
         },
@@ -170,6 +515,7 @@
             },
             "otel": {
               "type": "object",
+              "description": "OTLP exporter settings.",
               "additionalProperties": true,
               "properties": {
                 "endpoint": {
@@ -197,6 +543,7 @@
             },
             "auto": {
               "type": "object",
+              "description": "Automatic update application.",
               "additionalProperties": true,
               "properties": {
                 "enabled": {

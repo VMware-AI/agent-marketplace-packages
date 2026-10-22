@@ -13,57 +13,232 @@
       "required": ["model"],
       "properties": {
         "model": {
-          "type": "object",
-          "description": "Model configuration.",
-          "additionalProperties": true,
-          "properties": {
-            "provider": {
+          "description": "Active model. Either a bare model-id string, or an object carrying the provider selection alongside it. Hermes canonicalizes the string form into `{default: <id>}` on load, so both spellings end up equivalent.",
+          "oneOf": [
+            {
               "type": "string",
-              "description": "AI provider id (e.g. 'anthropic', 'openai', 'google'). The form renders this as a select driven by `x-provider-choices` (server-stamped from manifest.configs[].supported_providers).",
-              "x-provider-choices-source": "hermes"
+              "description": "Bare model id, used with the default provider.",
+              "examples": ["qwen3.5-9b", "claude-sonnet-4-5", "gpt-4o"]
             },
-            "default": {
-              "type": "string",
-              "description": "Default model id (e.g. 'claude-sonnet-4-5', 'gpt-4o')."
-            },
-            "base_url": {
-              "type": "string",
-              "description": "Override base URL for the provider (e.g. for a LiteLLM proxy).",
-              "format": "uri"
-            },
-            "context_length": {
-              "type": "integer",
-              "minimum": 1,
-              "description": "Override the model's context length (tokens)."
-            },
-            "max_tokens": {
-              "type": "integer",
-              "minimum": 1,
-              "description": "Override the model's max output tokens."
+            {
+              "type": "object",
+              "description": "Model configuration.",
+              "additionalProperties": true,
+              "properties": {
+                "provider": {
+                  "type": "string",
+                  "description": "Provider id. Built-ins are 'anthropic', 'openai', 'google', 'openrouter', etc. A self-hosted OpenAI-compatible endpoint is `custom:<name>`, where `<name>` matches a `custom_providers[].name` (or a `providers.<name>` key) — e.g. `custom:litellm`. Bare `custom` works only together with an explicit `base_url`. The form renders this as a select driven by `x-provider-choices` (server-stamped from manifest.configs[].supported_providers).",
+                  "examples": ["custom:litellm", "openai", "anthropic", "openrouter", "custom"],
+                  "x-provider-choices-source": "hermes"
+                },
+                "default": {
+                  "type": "string",
+                  "description": "Default model id. For a `custom:<name>` provider this is the id the proxy serves (against LiteLLM, its `model_name` alias — not the vendor's model name).",
+                  "examples": ["qwen3.5-9b", "claude-sonnet-4-5", "gpt-4o"]
+                },
+                "base_url": {
+                  "type": "string",
+                  "description": "Override base URL for the provider. Required for the bare `provider: custom` form; redundant when `provider` is `custom:<name>` and the URL lives in the `custom_providers` entry.",
+                  "format": "uri"
+                },
+                "context_length": {
+                  "type": "integer",
+                  "minimum": 1,
+                  "description": "Override the model's context length (tokens)."
+                },
+                "max_tokens": {
+                  "type": "integer",
+                  "minimum": 1,
+                  "description": "Override the model's max output tokens."
+                }
+              }
+            }
+          ]
+        },
+        "custom_providers": {
+          "type": "array",
+          "description": "Self-hosted OpenAI-compatible providers. Hermes reads both this legacy list form and the newer keyed `providers` map; this is the form that matches the `custom:<name>` provider selector. An entry is only usable once it has BOTH `name` and `base_url` — hermes drops the entry otherwise, and then `model.provider: custom:<name>` fails to resolve. Hermes also accepts camelCase aliases at runtime (baseUrl, apiKey, apiMode, keyEnv/apiKeyEnv, defaultModel, contextLength, rateLimitDelay) and auto-maps them, but logs a warning per entry per load; this schema requires canonical snake_case so the form emits the form hermes writes back.",
+          "minItems": 1,
+          "items": {
+            "type": "object",
+            "additionalProperties": true,
+            "required": ["name", "base_url"],
+            "properties": {
+              "name": {
+                "type": "string",
+                "description": "Provider name. Referenced from `model.provider` as `custom:<name>`.",
+                "examples": ["litellm", "vllm-local", "cliproxy"]
+              },
+              "base_url": {
+                "type": "string",
+                "description": "Provider endpoint URL. Must include the `/v1` suffix for OpenAI-compatible endpoints.",
+                "format": "uri"
+              },
+              "api_key": {
+                "type": "string",
+                "format": "password",
+                "description": "Inline API key for this provider. Auto-injected from the bound virtual key at deploy time — leave the placeholder; the deploy service substitutes the real key. Prefer `key_env` over a literal when the key is long-lived.",
+                "x-secret-source": "virtual_key"
+              },
+              "key_env": {
+                "type": "string",
+                "description": "Name of the env var holding this provider's API key (e.g. 'LITELLM_API_KEY'). Read from ~/.hermes/.env, which is the `hermes-env` slot. Takes precedence over `api_key` at runtime. Snake_case alias: `api_key_env`.",
+                "examples": ["LITELLM_API_KEY", "OPENAI_API_KEY"]
+              },
+              "api_mode": {
+                "type": "string",
+                "description": "Wire protocol for this provider. An OpenAI-compatible proxy uses `openai_chat` (the default). Alias: `transport`."
+              },
+              "model": {
+                "type": "string",
+                "description": "Model id this provider serves by default. Overrides `model.default` for this entry. Alias: `default_model`."
+              },
+              "models": {
+                "description": "Models this provider offers. Normally written as an id-keyed object; a bare list of ids is also accepted and normalized.",
+                "oneOf": [
+                  {
+                    "type": "object",
+                    "additionalProperties": {
+                      "type": "object",
+                      "additionalProperties": true
+                    }
+                  },
+                  {
+                    "type": "array",
+                    "items": {
+                      "oneOf": [
+                        { "type": "string" },
+                        {
+                          "type": "object",
+                          "additionalProperties": true,
+                          "required": ["id"],
+                          "properties": { "id": { "type": "string" } }
+                        }
+                      ]
+                    }
+                  }
+                ]
+              },
+              "context_length": {
+                "type": "integer",
+                "minimum": 1,
+                "description": "Context window (tokens) for this provider's models."
+              },
+              "rate_limit_delay": {
+                "type": "number",
+                "minimum": 0,
+                "description": "Seconds to wait after a rate-limit response before retrying."
+              },
+              "request_timeout_seconds": {
+                "type": "number",
+                "exclusiveMinimum": 0,
+                "description": "Per-request timeout for this provider (seconds)."
+              },
+              "stale_timeout_seconds": {
+                "type": "number",
+                "exclusiveMinimum": 0,
+                "description": "Time after which an in-flight call to this provider is considered stale (seconds)."
+              },
+              "discover_models": {
+                "type": "boolean",
+                "description": "Query the provider's /models endpoint to build the catalog instead of using the declared `models`."
+              },
+              "extra_body": {
+                "type": "object",
+                "description": "Extra JSON merged into every request body for this provider.",
+                "additionalProperties": true
+              },
+              "extra_headers": {
+                "type": "object",
+                "description": "Extra headers merged into every request for this provider.",
+                "additionalProperties": { "type": "string" }
+              },
+              "ssl_ca_cert": {
+                "type": "string",
+                "description": "Path to a CA bundle used to verify this provider's TLS certificate."
+              },
+              "ssl_verify": {
+                "type": "boolean",
+                "description": "Verify this provider's TLS certificate. Set false only for a trusted internal endpoint with a self-signed cert."
+              }
             }
           }
         },
         "providers": {
           "type": "object",
-          "description": "Per-provider config. Map keyed by provider id. The chosen provider's entry is auto-populated by the platform.",
-          "minProperties": 0,
+          "description": "Newer keyed form of `custom_providers` — a map keyed by provider id instead of a list. Hermes normalizes it to the same runtime shape, so the two forms are interchangeable; prefer one. The chosen provider's entry is auto-populated by the platform.",
           "additionalProperties": {
             "type": "object",
             "additionalProperties": true,
+            "required": ["base_url"],
             "properties": {
-              "api_key_env": {
-                "type": "string",
-                "description": "Name of the env var that holds the provider's API key (e.g. 'OPENAI_API_KEY'). Auto-injected as the env-var name for the chosen provider's bound virtual key — leave empty.",
-                "x-secret-source": "env_var_name"
-              },
+              "name": { "type": "string" },
               "base_url": {
                 "type": "string",
-                "description": "Per-provider base URL override.",
+                "description": "Provider endpoint URL.",
                 "format": "uri"
               },
-              "npm": {
+              "api_key": {
                 "type": "string",
-                "description": "NPM package for custom OpenAI-compatible providers."
+                "format": "password",
+                "description": "Inline API key for this provider. Auto-injected from the bound virtual key at deploy time — leave the placeholder.",
+                "x-secret-source": "virtual_key"
+              },
+              "key_env": {
+                "type": "string",
+                "description": "Name of the env var holding this provider's API key. Alias: `api_key_env`.",
+                "examples": ["LITELLM_API_KEY", "OPENAI_API_KEY"]
+              },
+              "api_mode": {
+                "type": "string",
+                "description": "Wire protocol for this provider. Alias: `transport`."
+              },
+              "model": {
+                "type": "string",
+                "description": "Default model id for this provider. Alias: `default_model`."
+              },
+              "models": {
+                "description": "Models this provider offers.",
+                "oneOf": [
+                  {
+                    "type": "object",
+                    "additionalProperties": {
+                      "type": "object",
+                      "additionalProperties": true
+                    }
+                  },
+                  {
+                    "type": "array",
+                    "items": {
+                      "oneOf": [
+                        { "type": "string" },
+                        {
+                          "type": "object",
+                          "additionalProperties": true,
+                          "required": ["id"],
+                          "properties": { "id": { "type": "string" } }
+                        }
+                      ]
+                    }
+                  }
+                ]
+              },
+              "context_length": { "type": "integer", "minimum": 1 },
+              "rate_limit_delay": { "type": "number", "minimum": 0 },
+              "request_timeout_seconds": { "type": "number", "exclusiveMinimum": 0 },
+              "stale_timeout_seconds": { "type": "number", "exclusiveMinimum": 0 },
+              "discover_models": { "type": "boolean" },
+              "extra_body": { "type": "object", "additionalProperties": true },
+              "extra_headers": {
+                "type": "object",
+                "additionalProperties": { "type": "string" }
+              },
+              "ssl_ca_cert": { "type": "string" },
+              "ssl_verify": { "type": "boolean" },
+              "enabled": {
+                "type": "boolean",
+                "description": "Set false to keep a provider in the config but hide it from the resolver. The entry is skipped entirely, so `custom:<name>` will fail to resolve while disabled.",
+                "default": true
               }
             }
           }

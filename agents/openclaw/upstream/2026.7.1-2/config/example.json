@@ -1,0 +1,38 @@
+{
+  "openclaw": {
+    "agents": {
+      "defaults": {
+        "model": "litellm/qwen3.5-9b"
+      }
+    },
+    "gateway": {
+      "mode": "local",
+      "trustedProxies": [
+        "127.0.0.1",
+        "::1"
+      ],
+      "auth": {
+        "mode": "none"
+      },
+      "controlUi": {
+        "allowedOrigins": ["*"]
+      }
+    },
+    "models": {
+      "mode": "replace",
+      "providers": {
+        "litellm": {
+          "api": "openai-completions",
+          "baseUrl": "http://GATEWAY-IP:4000/v1",
+          "apiKey": "KEY-PLACEHOLDER",
+          "models": [
+            {
+              "id": "qwen3.5-9b",
+              "name": "qwen3.5-9b"
+            }
+          ]
+        }
+      }
+    }
+  }
+}
