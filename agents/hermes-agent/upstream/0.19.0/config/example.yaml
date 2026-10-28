@@ -6,7 +6,10 @@ hermes:
     - name: litellm
       base_url: "http://GATEWAY-IP:4000/v1"
       api_key: "KEY-PLACEHOLDER"
-
+      models:
+        - qwen3.5-9b
+  display:
+    language: zh-CN
 ---
 hermes-env:
   HERMES_API_TIMEOUT: 60

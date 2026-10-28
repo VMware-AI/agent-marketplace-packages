@@ -11,6 +11,11 @@
       "description": "opencode config block (the body of opencode.json).",
       "additionalProperties": true,
       "required": ["model"],
+
+      "not": {
+        "required": ["permissions"],
+        "description": "The V2 rule-array `permissions` key is not part of the V1 config format. 1.19.0 aborts at startup with \"V2 permissions are not supported by OpenCode V1\" if it is present, so reject it here rather than let it through validation and fail the agent later. Use the `permission` map."
+      },
       "anyOf": [
         { "required": ["provider"] },
         { "required": ["providers"] }
@@ -221,31 +226,32 @@
               "top_p": { "type": "number" },
               "options": { "type": "object", "additionalProperties": true },
               "disable": { "type": "object", "additionalProperties": true, "description": "Disable specific tools for this agent." },
-              "permission": { "type": "object", "additionalProperties": true, "description": "Per-agent permission overrides, same shape as the legacy top-level `permission` map." },
+              "permission": { "type": "object", "additionalProperties": true, "description": "Per-agent permission overrides, same shape as the top-level `permission` map." },
               "tools": { "type": "object", "additionalProperties": true, "description": "Per-agent tool overrides." }
+            },
+            "not": {
+              "required": ["permissions"],
+              "description": "The V2 rule-array `permissions` key is not part of the V1 config format. 1.19.0 aborts at startup with \"V2 permissions are not supported by OpenCode V1\" if it is present — in a per-agent entry too, not just at the top level — so reject it here rather than let it through validation and fail the agent later. Use the `permission` map."
             }
           }
         },
 
-        "agent": { "type": "object", "additionalProperties": true, "description": "LEGACY agent map. Migrated into `agents` on load, with `mode: \"primary\"` stamped on each entry; deprecated upstream." },
-
-        "permissions": {
-          "type": "array",
-          "description": "Tool permission rules. Current form; the binary flattens both the legacy `permission` map and the legacy `tools` map into this rule list on load.",
-          "items": {
+        "agent": {
+          "type": "object",
+          "description": "LEGACY agent map. Migrated into `agents` on load, with `mode: \"primary\"` stamped on each entry; deprecated upstream.",
+          "additionalProperties": {
             "type": "object",
             "additionalProperties": true,
-            "properties": {
-              "action": { "type": "string", "description": "What the rule governs — e.g. 'edit' (the legacy map's 'write' and 'patch' both normalize to this), or '*' for a blanket rule." },
-              "resource": { "type": "string", "description": "Glob the rule applies to, e.g. '*' or a path pattern." },
-              "effect": { "type": "string", "enum": ["allow", "deny", "ask"], "description": "Effect when the rule matches." }
+            "not": {
+              "required": ["permissions"],
+              "description": "The V2 rule-array `permissions` key is not part of the V1 config format. 1.19.0 aborts at startup with \"V2 permissions are not supported by OpenCode V1\" if it is present — in a per-agent entry too, not just at the top level — so reject it here rather than let it through validation and fail the agent later. Use the `permission` map."
             }
           }
         },
 
-        "permission": { "type": "object", "additionalProperties": true, "description": "LEGACY permission map (tool action -> effect, or tool -> resource -> effect). Flattened into `permissions` on load; deprecated upstream." },
+        "permission": { "type": "object", "additionalProperties": true, "description": "Permission map (tool action -> effect, or tool -> resource -> effect). This is the ONLY permission form 1.19.0 accepts — the V2 rule-array `permissions` key does not exist in this build and makes the binary refuse to start." },
 
-        "tools": { "type": "object", "additionalProperties": { "type": "boolean" }, "description": "LEGACY tool enable/disable map. Flattened into `permissions` on load; deprecated upstream." },
+        "tools": { "type": "object", "additionalProperties": { "type": "boolean" }, "description": "Tool enable/disable map, flattened into the `permission` map on load." },
 
         "snapshots": { "type": "boolean", "description": "Enable session snapshots, letting the workspace state be reverted. Current key; `snapshot` is the deprecated alias." },
         "snapshot": { "type": "boolean", "description": "LEGACY alias for `snapshots`. Deprecated upstream; migrated on load." },
@@ -289,7 +295,18 @@
         "attachment": { "type": "object", "additionalProperties": true, "description": "LEGACY attachment settings. Deprecated upstream; migrated to the current shape." },
         "autoshare": { "type": "boolean", "description": "LEGACY boolean alias for `share`. `true` migrates to `share: \"auto\"`; deprecated upstream." },
         "command": { "type": "object", "additionalProperties": true, "description": "LEGACY custom slash commands. Migrated into `commands` on load; deprecated upstream." },
-        "mode": { "type": "object", "additionalProperties": true, "description": "LEGACY agent map (new agents carrying `mode: \"primary\"`). Merged into `agents` on load; deprecated upstream." },
+        "mode": {
+          "type": "object",
+          "description": "LEGACY agent map (new agents carrying `mode: \"primary\"`). Merged into `agents` on load; deprecated upstream.",
+          "additionalProperties": {
+            "type": "object",
+            "additionalProperties": true,
+            "not": {
+              "required": ["permissions"],
+              "description": "The V2 rule-array `permissions` key is not part of the V1 config format. 1.19.0 aborts at startup with \"V2 permissions are not supported by OpenCode V1\" if it is present — in a per-agent entry too, not just at the top level — so reject it here rather than let it through validation and fail the agent later. Use the `permission` map."
+            }
+          }
+        },
         "plugin": { "type": "array", "items": {}, "description": "LEGACY singular plugin list. Migrated into `plugins` on load; deprecated upstream." },
         "reference": { "type": "object", "additionalProperties": true, "description": "LEGACY reference documents. Migrated into `references` on load; deprecated upstream." }
       }

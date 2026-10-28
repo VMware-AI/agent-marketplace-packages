@@ -20,8 +20,15 @@
           "properties": {
             "defaults": {
               "type": "object",
-              "description": "Default agent settings.",
+              "description": "Default agent settings. openclaw's AgentDefaultsConfig is $strict, so a key it does not define aborts startup with a bare \"agents.defaults: Invalid input\". This schema deliberately keeps additionalProperties open (the real type has 33 fields, most of them tuning knobs) but explicitly rejects the two names that look plausible and are not real, so they fail here with a useful message instead of there.",
               "additionalProperties": true,
+              "not": {
+                "anyOf": [
+                  { "required": ["smallModel"] },
+                  { "required": ["cwd"] }
+                ],
+                "description": "`smallModel` and `cwd` are not openclaw config fields. The real names are `utilityModel` and `workspace`. openclaw $strict-rejects them at startup; catch them here instead."
+              },
               "properties": {
                 "model": {
                   "description": "Primary model as `<providerId>/<modelId>` — the provider id is a key of models.providers, the model id a key of that provider's `models` array (e.g. 'openai/minimax'). Either the bare string, or an object with `primary` + ordered `fallbacks`.",
@@ -47,30 +54,28 @@
                     }
                   ]
                 },
-                "smallModel": {
-                  "description": "Lower-cost model for short internal tasks (e.g. generated session titles). Same shape as `model`.",
-                  "oneOf": [
-                    { "type": "string" },
-                    {
-                      "type": "object",
-                      "additionalProperties": true,
-                      "properties": {
-                        "primary": { "type": "string" },
-                        "fallbacks": { "type": "array", "items": { "type": "string" } }
-                      }
-                    }
-                  ]
+                "utilityModel": {
+                  "description": "Lower-cost model for short internal tasks (e.g. generated session titles). NOTE: this is the real field name — there is no `smallModel`; openclaw's config object is $strict and rejects unknown keys at startup.",
+                  "type": "string"
                 },
                 "models": {
                   "type": "object",
                   "description": "Model catalog with optional aliases, keyed by full `<providerId>/<modelId>` ref.",
                   "additionalProperties": {
                     "type": "object",
-                    "additionalProperties": true,
+                    "additionalProperties": false,
                     "properties": {
                       "alias": { "type": "string" },
-                      "streaming": { "type": "boolean" },
-                      "params": { "type": "object", "additionalProperties": true }
+                      "params": { "type": "object", "additionalProperties": true },
+                      "streaming": {
+                        "type": "boolean",
+                        "description": "Enable streaming for this model (default: true; false for Ollama to avoid SDK issue #1205)."
+                      },
+                      "agentRuntime": {
+                        "type": "object",
+                        "additionalProperties": false,
+                        "properties": { "id": { "type": "string" } }
+                      }
                     }
                   }
                 },
@@ -79,9 +84,9 @@
                   "description": "Global default provider params applied to all models before per-model and per-agent overrides.",
                   "additionalProperties": true
                 },
-                "cwd": {
+                "workspace": {
                   "type": "string",
-                  "description": "Agent working directory (preferred). Used as the default cwd for agent runs."
+                  "description": "Agent workspace directory. This is the real field name — there is no `cwd`; openclaw's config object is $strict and rejects unknown keys at startup."
                 },
                 "repoRoot": {
                   "type": "string",
@@ -247,7 +252,7 @@
                     "minItems": 1,
                     "items": {
                       "type": "object",
-                      "additionalProperties": true,
+                      "additionalProperties": false,
                       "required": ["id", "name"],
                       "properties": {
                         "id": {
@@ -293,14 +298,35 @@
                         },
                         "cost": {
                           "type": "object",
-                          "description": "Token pricing in USD per million tokens.",
-                          "additionalProperties": true,
-                          "required": ["input", "output", "cacheRead", "cacheWrite"],
+                          "description": "Token pricing in USD per million tokens. Every leaf is optional in openclaw; omit a key to leave it unset rather than passing null.",
+                          "additionalProperties": false,
                           "properties": {
                             "input": { "type": "number", "minimum": 0 },
                             "output": { "type": "number", "minimum": 0 },
                             "cacheRead": { "type": "number", "minimum": 0 },
-                            "cacheWrite": { "type": "number", "minimum": 0 }
+                            "cacheWrite": { "type": "number", "minimum": 0 },
+                            "tieredPricing": {
+                              "type": "array",
+                              "description": "Context-length tiers; the first tier whose range contains the live context wins.",
+                              "items": {
+                                "type": "object",
+                                "additionalProperties": false,
+                                "required": ["input", "output", "cacheRead", "cacheWrite", "range"],
+                                "properties": {
+                                  "input": { "type": "number", "minimum": 0 },
+                                  "output": { "type": "number", "minimum": 0 },
+                                  "cacheRead": { "type": "number", "minimum": 0 },
+                                  "cacheWrite": { "type": "number", "minimum": 0 },
+                                  "range": {
+                                    "description": "Either [minTokens] (open-ended above) or [minTokens, maxTokens]. Inclusive lower bound, exclusive upper.",
+                                    "type": "array",
+                                    "minItems": 1,
+                                    "maxItems": 2,
+                                    "items": { "type": "integer", "minimum": 0 }
+                                  }
+                                }
+                              }
+                            }
                           }
                         },
                         "contextWindow": {
@@ -320,12 +346,31 @@
                         },
                         "thinkingLevelMap": {
                           "type": "object",
-                          "description": "Maps openclaw thinking levels to provider/model-specific values.",
-                          "additionalProperties": true
+                          "description": "Maps openclaw thinking levels to provider/model-specific values. Each value may be null to mean \"send nothing for this level\".",
+                          "additionalProperties": false,
+                          "properties": {
+                            "off": { "type": ["string", "null"] },
+                            "minimal": { "type": ["string", "null"] },
+                            "low": { "type": ["string", "null"] },
+                            "medium": { "type": ["string", "null"] },
+                            "high": { "type": ["string", "null"] },
+                            "xhigh": { "type": ["string", "null"] },
+                            "max": { "type": ["string", "null"] }
+                          }
                         },
                         "params": {
                           "type": "object",
                           "additionalProperties": true
+                        },
+                        "agentRuntime": {
+                          "type": "object",
+                          "additionalProperties": false,
+                          "properties": { "id": { "type": "string" } }
+                        },
+                        "metadataSource": {
+                          "type": "string",
+                          "const": "models-add",
+                          "description": "Marks this entry as injected by `openclaw models add` rather than hand-written config."
                         },
                         "headers": {
                           "type": "object",
@@ -333,17 +378,62 @@
                         },
                         "compat": {
                           "type": "object",
-                          "description": "Provider compatibility flags for payload shaping and feature gating.",
-                          "additionalProperties": true
+                          "description": "Provider compatibility flags for payload shaping and feature gating. Strict in openclaw — an unrecognised flag aborts startup.",
+                          "additionalProperties": false,
+                          "properties": {
+                            "supportsStore": { "type": "boolean" },
+                            "supportsPromptCacheKey": { "type": "boolean" },
+                            "supportsDeveloperRole": { "type": "boolean" },
+                            "supportsReasoningEffort": { "type": "boolean" },
+                            "supportsTemperature": { "type": "boolean" },
+                            "supportsUsageInStreaming": { "type": "boolean" },
+                            "supportsTools": { "type": "boolean" },
+                            "supportsStrictMode": { "type": "boolean" },
+                            "requiresStringContent": { "type": "boolean" },
+                            "strictMessageKeys": { "type": "boolean" },
+                            "visibleReasoningDetailTypes": { "type": "array", "items": { "type": "string" } },
+                            "supportedReasoningEfforts": { "type": "array", "items": { "type": "string" } },
+                            "reasoningEffortMap": {
+                              "type": "object",
+                              "additionalProperties": { "type": "string" }
+                            },
+                            "maxTokensField": {
+                              "type": "string",
+                              "enum": ["max_completion_tokens", "max_tokens"]
+                            },
+                            "thinkingFormat": {
+                              "type": "string",
+                              "enum": ["openai", "deepseek", "openrouter", "together", "zai", "qwen", "qwen-chat-template"]
+                            },
+                            "requiresToolResultName": { "type": "boolean" },
+                            "requiresAssistantAfterToolResult": { "type": "boolean" },
+                            "requiresThinkingAsText": { "type": "boolean" },
+                            "requiresReasoningContentOnAssistantMessages": { "type": "boolean" },
+                            "toolSchemaProfile": { "type": "string" },
+                            "unsupportedToolSchemaKeywords": { "type": "array", "items": { "type": "string" } },
+                            "nativeWebSearchTool": { "type": "boolean" },
+                            "toolCallArgumentsEncoding": { "type": "string" },
+                            "requiresMistralToolIds": { "type": "boolean" },
+                            "requiresOpenAiAnthropicToolPayload": { "type": "boolean" }
+                          }
                         },
                         "mediaInput": {
                           "type": "object",
-                          "description": "Media input limits used by routing and preflight compression.",
-                          "additionalProperties": true
-                        },
-                        "streaming": {
-                          "type": "boolean",
-                          "description": "Enable streaming for this model."
+                          "description": "Media input limits used by routing and preflight compression. Strict in openclaw. To declare a model as text-only, omit this key entirely or use `input: [\"text\"]` — `image` here is an OBJECT of limits, never a boolean.",
+                          "additionalProperties": false,
+                          "properties": {
+                            "image": {
+                              "type": "object",
+                              "additionalProperties": false,
+                              "properties": {
+                                "maxBytes": { "type": "integer", "minimum": 1 },
+                                "maxPixels": { "type": "integer", "minimum": 1 },
+                                "maxSidePx": { "type": "integer", "minimum": 1 },
+                                "preferredSidePx": { "type": "integer", "minimum": 1 },
+                                "tokenMode": { "type": "string", "enum": ["tile", "detail", "provider"] }
+                              }
+                            }
+                          }
                         }
                       }
                     }
