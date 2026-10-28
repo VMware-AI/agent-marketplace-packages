@@ -65,47 +65,28 @@ type ServiceSpec struct {
 // (chmod 0600 by convention for sensitive files); agentpkg only verifies
 // the file appeared.
 //
+// This is the DELIVERY contract only — where each config file lands and under
+// what permissions. The SHAPE contract (what fields the rendered file may
+// contain) lives in the agent's `config/schema.json` (draft-07 JSON Schema),
+// shipped alongside the manifest in the same package. The two are related by
+// name: `Name` must match a top-level key under the schema's `properties`, and
+// that key's value is the schema for this slot.
+//
 // `File` is the basename the script should produce in its output directory
 // (informational — agentpkg does not write the file itself).
 // `RenderTo` is the final on-host path (e.g. "~/.openclaw/openclaw.json").
 // `Mode` is informational; the script is responsible for chmod.
 //
-// RequiredInputs / OptionalInputs / SupportedProviders expose the
-// manifest-driven config schema so external clients (daemon, Control UI)
-// can introspect what fields each version expects. They are zero-valued
-// for schema 1.0 manifests that predate manifest 1.1's config-driven flow.
+// SupportedProviders exposes the catalog of built-in providers an agent can be
+// configured against, so the platform can stamp `x-provider-choices` onto the
+// schema's provider fields. It is zero-valued for manifests that declare no
+// provider catalog.
 type ConfigSpec struct {
-	Name                 string                 `json:"name"`
-	File                 string                 `json:"file"`
-	RenderTo             string                 `json:"render_to"`
-	Mode                 string                 `json:"mode"`
-	RequiredInputs       []InputField           `json:"required_inputs,omitempty"`
-	OptionalInputs       map[string]InputField  `json:"optional_inputs,omitempty"`
-	SupportedProviders   *SupportedProviders    `json:"supported_providers,omitempty"`
-}
-
-// InputField is one input declared by the agent's manifest under either
-// required_inputs (strictly required, missing → exit 70) or
-// optional_inputs (white-listed, omitted → unset in output).
-//
-// JsonPath uses dot notation ("a.b.c") with "<name>" placeholders that
-// resolve to the OPENCLAW_PROVIDER / OPENCODE_PROVIDER / HERMES_PROVIDER
-// value at render time. Type is one of: string / integer / boolean /
-// number / enum / json_array / json_object / provider / secret_string.
-type InputField struct {
-	// InputKey is the daemon-supplied JSON key (e.g. "OPENCLAW_PROVIDER",
-	// "ANTHROPIC_API_KEY", or "<PROVIDER>_API_KEY" for dynamic resolve).
-	InputKey     string   `json:"input_key,omitempty"`
-	JsonPath     string   `json:"json_path"`
-	Type         string   `json:"type"`
-	RequiredWhen string   `json:"required_when,omitempty"`
-	// EnumValues is non-empty only when Type == "enum".
-	EnumValues   []string `json:"enum_values,omitempty"`
-	// Validate is a hint string (e.g. "in_supported_providers_or_custom").
-	Validate      string   `json:"validate,omitempty"`
-	// DynamicResolve is non-empty for synthetic API-key fields like
-	// "<PROVIDER>_API_KEY". Format: "from_<daemon-name>_provider".
-	DynamicResolve string `json:"dynamic_resolve,omitempty"`
+	Name               string              `json:"name"`
+	File               string              `json:"file"`
+	RenderTo           string              `json:"render_to"`
+	Mode               string              `json:"mode"`
+	SupportedProviders *SupportedProviders `json:"supported_providers,omitempty"`
 }
 
 // SupportedProviders exposes the catalog of built-in providers an agent

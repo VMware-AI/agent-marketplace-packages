@@ -85,6 +85,17 @@ func buildIndexFromDir(outDir string) (*apitypes.Index, error) {
 			continue
 		}
 
+		// Copy config/schema.json + config/example.* out of the tarball into
+		// dist/config/<tarball-stem>/ so the API can serve them directly
+		// (runtime never unpacks a tarball). Returns nil when the version
+		// ships no config/ directory.
+		configFiles, err := stageConfigFiles(tarPath, tarName, outDir)
+		if err != nil {
+			// Non-fatal: a version without config/ is still installable, it
+			// just can't offer a schema-driven form.
+			fmt.Fprintf(os.Stderr, "warning: %s: staging config files: %v\n", tarName, err)
+		}
+
 		// Build the Version entry.
 		v := apitypes.Version{
 			Version:    m.Version,
@@ -97,6 +108,7 @@ func buildIndexFromDir(outDir string) (*apitypes.Index, error) {
 				SHA256:    "sha256:" + expectedHex,
 			},
 			Manifest: convertManifest(m),
+			Config:   configFiles,
 		}
 
 		// Aggregate into the per-(name,source) Agent entry.
@@ -306,18 +318,9 @@ func convertManifest(m *manifest.Manifest) apitypes.Manifest {
 			RenderTo: c.RenderTo,
 			Mode:     c.Mode,
 		}
-		// Project admin-layer schema so daemons can introspect what
-		// fields they need to supply for `agentpkg config generate`.
-		// Schema 1.0 manifests have nil slices/maps here; that's fine.
-		for _, ri := range c.RequiredInputs {
-			apitypesCfg.RequiredInputs = append(apitypesCfg.RequiredInputs, inputFieldToAPI(ri))
-		}
-		if len(c.OptionalInputs) > 0 {
-			apitypesCfg.OptionalInputs = make(map[string]apitypes.InputField, len(c.OptionalInputs))
-			for k, oi := range c.OptionalInputs {
-				apitypesCfg.OptionalInputs[k] = inputFieldToAPI(oi)
-			}
-		}
+		// Only the provider catalog is projected here. The per-field shape
+		// contract lives in the agent's config/schema.json (served by
+		// /config/schema), not in the manifest.
 		if c.SupportedProviders != nil {
 			apitypesCfg.SupportedProviders = &apitypes.SupportedProviders{}
 			for _, bp := range c.SupportedProviders.Builtin {
@@ -340,24 +343,6 @@ func convertManifest(m *manifest.Manifest) apitypes.Manifest {
 	return out
 }
 
-// inputFieldToAPI maps internal/manifest.InputField →
-// apitypes.InputField. Both structs use the same JSON tags so a
-// shallow copy is sufficient for the value-semantics fields; we use
-// append-slice copy for EnumValues to avoid aliasing.
-func inputFieldToAPI(in manifest.InputField) apitypes.InputField {
-	out := apitypes.InputField{
-		InputKey:       in.InputKey,
-		JsonPath:       in.JsonPath,
-		Type:           in.Type,
-		RequiredWhen:   in.RequiredWhen,
-		Validate:       in.Validate,
-		DynamicResolve: in.DynamicResolve,
-	}
-	if len(in.EnumValues) > 0 {
-		out.EnumValues = append([]string(nil), in.EnumValues...)
-	}
-	return out
-}
 
 // findFileInTarball scans the entire tarball and returns the contents of
 // the FIRST regular file whose base name matches `wantBase` (e.g.
@@ -393,4 +378,127 @@ func findFileInTarball(tarPath, wantBase string) ([]byte, error) {
 		}
 	}
 	return nil, os.ErrNotExist
+}
+
+// agentConfigDirName is the dist/ subdirectory that holds each version's
+// staged config-contract files. Mirrors repo.Dir.ConfigDirPath().
+const agentConfigDirName = "config"
+
+// configContractFiles are the files under a version's config/ directory that
+// make up the shape contract. schema.json drives the form; example.* seeds the
+// raw editor and must be served byte-for-byte in its authored format (JSON
+// stays JSON, YAML stays YAML) because the frontend renders it verbatim.
+var configContractFiles = []string{"config/schema.json", "config/example.json", "config/example.yaml"}
+
+// stageConfigFiles copies an agent's config-contract files out of its tarball
+// into dist/config/<tarball-stem>/ and returns the index entry describing them.
+//
+// Returns (nil, nil) when the tarball ships no config/ directory — a version
+// with no schema is legitimate (the platform falls back to raw-only), so that
+// is not an error.
+//
+// The files are matched by their "config/..." suffix rather than exact tar
+// path, because tarballs have two layouts: the current one (config/ at the
+// root, produced by `package build`) and the legacy nested one
+// (<version>/config/..., produced by tools/pack.sh).
+func stageConfigFiles(tarPath, tarName, outDir string) (*apitypes.ConfigFiles, error) {
+	f, err := os.Open(tarPath)
+	if err != nil {
+		return nil, fmt.Errorf("open tarball: %w", err)
+	}
+	defer f.Close()
+	gz, err := gzip.NewReader(f)
+	if err != nil {
+		return nil, fmt.Errorf("gzip: %w", err)
+	}
+	defer gz.Close()
+
+	staged := map[string][]byte{}
+	tr := tar.NewReader(gz)
+	for {
+		hdr, err := tr.Next()
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			return nil, fmt.Errorf("tar: %w", err)
+		}
+		if hdr.Typeflag != tar.TypeReg {
+			continue
+		}
+		rel := strings.TrimPrefix(hdr.Name, "./")
+		for _, want := range configContractFiles {
+			if rel == want || strings.HasSuffix(rel, "/"+want) {
+				data, readErr := io.ReadAll(tr)
+				if readErr != nil {
+					return nil, fmt.Errorf("read %s: %w", hdr.Name, readErr)
+				}
+				staged[want] = data
+			}
+		}
+	}
+	if len(staged) == 0 {
+		return nil, nil
+	}
+
+	destDir := filepath.Join(outDir, agentConfigDirName, strings.TrimSuffix(tarName, ".tar.gz"))
+	if err := os.MkdirAll(destDir, 0o755); err != nil {
+		return nil, fmt.Errorf("mkdir %s: %w", destDir, err)
+	}
+
+	out := &apitypes.ConfigFiles{Status: apitypes.ConfigStatusPartial}
+	// Write via tmp+rename so a concurrent reader (the server hot-reloads
+	// dist/ every 10s) never sees a half-written file.
+	for _, rel := range configContractFiles {
+		data, ok := staged[rel]
+		if !ok {
+			continue
+		}
+		name := filepath.Base(rel)
+		if err := writeFileAtomic(filepath.Join(destDir, name), data, 0o644); err != nil {
+			return nil, fmt.Errorf("write %s: %w", name, err)
+		}
+		distRel := filepath.ToSlash(filepath.Join(agentConfigDirName, strings.TrimSuffix(tarName, ".tar.gz"), name))
+		switch name {
+		case "schema.json":
+			out.Schema = distRel
+		case "example.json":
+			out.Example = distRel
+			out.ExampleFormat = "json"
+		case "example.yaml":
+			out.Example = distRel
+			out.ExampleFormat = "yaml"
+		}
+	}
+	if out.Schema != "" {
+		out.Status = apitypes.ConfigStatusOK
+	}
+	return out, nil
+}
+
+// writeFileAtomic writes data to path via a tmp file + rename so readers never
+// observe a partial write. Same pattern as the server's skills upload path.
+func writeFileAtomic(path string, data []byte, mode os.FileMode) error {
+	dir := filepath.Dir(path)
+	tmp, err := os.CreateTemp(dir, ".tmp-config-*")
+	if err != nil {
+		return err
+	}
+	tmpName := tmp.Name()
+	defer func() { _ = os.Remove(tmpName) }() // no-op once the rename succeeds
+	if _, err := tmp.Write(data); err != nil {
+		tmp.Close()
+		return err
+	}
+	if err := tmp.Sync(); err != nil {
+		tmp.Close()
+		return err
+	}
+	if err := tmp.Close(); err != nil {
+		return err
+	}
+	if err := os.Chmod(tmpName, mode); err != nil {
+		return err
+	}
+	return os.Rename(tmpName, path)
 }

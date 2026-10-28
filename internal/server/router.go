@@ -100,6 +100,12 @@ func NewRouter(s *State, password string, logger *slog.Logger) http.Handler {
 			r.Get("/agents/{name}/{source}/{version}/tarball", HandleTarball(s))
 			r.Get("/agents/{name}/{source}/{version}/sha256", HandleSHA256(s))
 			r.Get("/agents/{name}/{source}/{version}/config-schema", HandleConfigSchema(s))
+			// Config-contract files, staged out of each tarball into dist/config/
+			// at build time. The wizard's form renderer consumes /config/schema;
+			// the raw editor consumes /config/example verbatim, in whatever
+			// format the agent ships (JSON stays JSON, YAML stays YAML).
+			r.Get("/agents/{name}/{source}/{version}/config/schema", HandleConfigSchemaFile(s))
+			r.Get("/agents/{name}/{source}/{version}/config/example", HandleConfigExampleFile(s))
 			r.Get("/index.json", HandleRawIndex(s))
 
 			// Skills endpoints (Phase 3: read-only). Upload/delete routes

@@ -102,10 +102,23 @@ Each agent ships `render-config.sh` next to `install.sh` in the tarball. `agentp
 
 | Env var | Meaning |
 |---------|---------|
-| `AGENT_MARKETPLACE_CONFIG_INPUT` | absolute path to daemon's config input JSON file |
 | `AGENT_MARKETPLACE_AGENT` | agent name (e.g. `openclaw`) |
 | `AGENT_MARKETPLACE_VERSION` | the version being installed (e.g. `2026.7.1-2`) |
 | `AGENT_MARKETPLACE_DEPLOY_ROOT` | absolute deploy_root (informational) |
+| `MARKETPLACE_CONFIG_<SLOT>` | base64 of one config slot's body, one var per `manifest.configs[]` entry |
+
+`<SLOT>` is the uppercased `configs[].name` with `-` → `_`, so hermes-agent's
+`hermes-env` slot is `MARKETPLACE_CONFIG_HERMES_ENV`.
+
+agentpkg splits the `--config-input` file by `configs[].name` and base64s each
+**slot body** — not the wrapper — because the script writes the decoded bytes
+verbatim to `render_to`; encoding the wrapper would nest the slot key into the
+rendered file. The input file is slot-keyed (`{"openclaw": {...}}`), the same
+shape as the agent's `config/example.*`, so a raw-mode frontend can submit its
+edited example unchanged.
+
+The OVA firstboot sets the same `MARKETPLACE_CONFIG_<SLOT>` vars directly from
+`guestinfo.marketplace_config.<slot>`, so that path needs no changes.
 
 **Outputs:** the script writes config file(s) to the upstream-canonical paths declared in `manifest.configs[].render_to`. The script owns the chmod (typically `0600` for sensitive config).
 

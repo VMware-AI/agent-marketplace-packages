@@ -2,179 +2,313 @@
   "$schema": "http://json-schema.org/draft-07/schema#",
   "$id": "https://agent-marketplace-packages/agents/opencode/1.19.0/config/schema.json",
   "title": "opencode",
-  "description": "opencode 1.19.0 — web UI for AI agent tasks (anomalyco/opencode). Renders to ~/.config/opencode/opencode.json (mode 0600). The `opencode` slot is the single config block; values in this block are written verbatim by the in-VM render-config.sh.",
+  "description": "opencode 1.19.0 — web UI for AI agent tasks (anomalyco/opencode). Renders to ~/.config/opencode/opencode.json (mode 0600). The `opencode` slot is the single config block. Verified against the upstream JSON Schema at https://opencode.ai/config.json (draft 2020-12) and against the 1.19.0 binary's own config normalizer, which migrates every key marked `deprecated` below into its modern replacement. Upstream's `$defs`/`$ref` graph is inlined here — the platform's resolver is single-file and does not follow `$ref`. NOTE: 1.19.0 has both a legacy and a modern provider shape; prefer the modern one. `provider` is still accepted (migrated on load) but `enabled_providers`, `disabled_providers`, `small_model` and `subagent_depth` are carried by the binary without being migrated, so they silently have no effect.",
   "type": "object",
   "additionalProperties": true,
   "properties": {
     "opencode": {
       "type": "object",
-      "description": "opencode config block. `provider` is a map keyed by provider id (the chosen id from supported_providers.builtin + 'custom'); the chosen provider's options (apiKey, baseURL) are nested under provider.<chosen>.",
+      "description": "opencode config block (the body of opencode.json).",
       "additionalProperties": true,
-      "required": ["provider"],
+      "required": ["model"],
+
+      "not": {
+        "required": ["permissions"],
+        "description": "The V2 rule-array `permissions` key is not part of the V1 config format. 1.19.0 aborts at startup with \"V2 permissions are not supported by OpenCode V1\" if it is present, so reject it here rather than let it through validation and fail the agent later. Use the `permission` map."
+      },
+      "anyOf": [
+        { "required": ["provider"] },
+        { "required": ["providers"] }
+      ],
       "properties": {
+        "$schema": {
+          "type": "string",
+          "format": "uri",
+          "default": "https://opencode.ai/config.json",
+          "description": "JSON Schema pointer for editor completion. Written verbatim into opencode.json."
+        },
+
         "provider": {
           "type": "object",
-          "description": "Provider map. Each key is a provider id; the chosen provider's block is the one whose `options.apiKey` is bound to the user's virtual key at deploy time. The form renders this as a 'pick provider + fill options' widget driven by `x-provider-choices` (server-stamped from manifest.configs[].supported_providers).",
+          "description": "LEGACY provider map, keyed by provider id. 1.19.0 still accepts this — the binary's normalizer folds it into `providers` on load — but upstream marks it deprecated and it will be removed. Prefer `providers` for new configs. Note the field names differ between the two shapes: `npm` here vs `package`, `options` here vs `settings`. The form renders this as a 'pick provider + fill options' widget driven by `x-provider-choices` (server-stamped from manifest.configs[].supported_providers).",
           "minProperties": 1,
           "additionalProperties": {
             "type": "object",
             "additionalProperties": true,
             "properties": {
+              "api": {
+                "type": "string",
+                "description": "API adapter for models under this provider.",
+                "examples": ["openai-completions", "anthropic-messages", "google-generative-ai"]
+              },
+              "name": { "type": "string", "description": "Display name shown for this provider in the opencode UI. opencode matches this against the name used in `/connect`." },
+              "id": { "type": "string", "description": "Canonical provider id this entry routes to." },
+              "env": { "type": "array", "items": { "type": "string" }, "description": "Environment variable names to read for this provider's credentials, in priority order." },
               "npm": {
                 "type": "string",
-                "description": "NPM package name for the provider's SDK. Required for `custom` (OpenAI-compatible) providers."
+                "description": "NPM package implementing this provider's SDK. An OpenAI-compatible custom endpoint uses `@ai-sdk/openai-compatible`.",
+                "examples": ["@ai-sdk/openai-compatible", "@ai-sdk/anthropic", "@ai-sdk/openai"]
               },
+              "whitelist": { "type": "array", "items": { "type": "string" }, "description": "Model ids to expose from this provider." },
+              "blacklist": { "type": "array", "items": { "type": "string" }, "description": "Model ids to hide from this provider." },
               "options": {
                 "type": "object",
-                "description": "Provider-specific options. `apiKey` is auto-injected from the user's bound virtual key — leave empty in the form; the deploy service substitutes the real key.",
+                "description": "Provider connection settings. The modern form calls this `settings`.",
                 "additionalProperties": true,
                 "properties": {
                   "apiKey": {
                     "type": "string",
                     "format": "password",
-                    "description": "API key for the provider. Marked `x-secret-source: virtual_key` so the deploy service auto-injects from the bound virtual key — do not paste a real key here.",
+                    "description": "API key for the provider. Auto-injected from the bound virtual key at deploy time — leave the placeholder; the deploy service substitutes the real key.",
                     "x-secret-source": "virtual_key"
                   },
                   "baseURL": {
                     "type": "string",
-                    "description": "Base URL for OpenAI-compatible custom providers (e.g. ollama, vLLM, LiteLLM proxy).",
-                    "format": "uri"
+                    "format": "uri",
+                    "description": "Provider endpoint base URL. Must include the `/v1` suffix for OpenAI-compatible endpoints."
+                  },
+                  "enterpriseUrl": { "type": "string", "description": "GitHub Enterprise URL, for copilot authentication." },
+                  "setCacheKey": { "type": "boolean", "description": "Enable promptCacheKey for this provider (default false)." },
+                  "timeout": { "description": "Timeout in milliseconds for full requests to this provider, or `false` to disable.", "oneOf": [{ "type": "number", "exclusiveMinimum": 0 }, { "type": "boolean", "enum": [false] }] },
+                  "headerTimeout": { "description": "Milliseconds to wait for response headers (default 300000), or `false` to disable.", "oneOf": [{ "type": "number", "exclusiveMinimum": 0 }, { "type": "boolean", "enum": [false] }] },
+                  "chunkTimeout": { "description": "Milliseconds between streamed SSE chunks (default 300000), or `false` to disable.", "oneOf": [{ "type": "number", "exclusiveMinimum": 0 }, { "type": "boolean", "enum": [false] }] }
+                }
+              },
+              "models": {
+                "type": "object",
+                "description": "Models this provider serves, keyed by model id. opencode cannot discover models from an OpenAI-compatible endpoint, so each id the proxy serves is declared here — against a LiteLLM proxy the key is LiteLLM's `model_name` alias, not the vendor's model name.",
+                "minProperties": 1,
+                "additionalProperties": {
+                  "type": "object",
+                  "additionalProperties": true,
+                  "properties": {
+                    "id": { "type": "string" },
+                    "name": { "type": "string", "description": "Display name in the opencode model picker." },
+                    "family": { "type": "string", "description": "Model family, used to group variants and pick prompt overlays." },
+                    "release_date": { "type": "string", "description": "Release date (YYYY-MM-DD). Lets opencode tell known models from unknown custom ones." },
+                    "attachment": { "type": "boolean", "description": "Whether the model accepts image attachments." },
+                    "reasoning": { "type": "boolean", "description": "Whether the model supports reasoning/thinking controls." },
+                    "temperature": { "type": "boolean", "description": "Whether a temperature parameter is accepted." },
+                    "tool_call": { "type": "boolean", "description": "Whether the model supports tool calls." },
+                    "interleaved": { "type": "boolean" },
+                    "experimental": { "type": "boolean", "description": "Hide from the picker unless experimental features are enabled." },
+                    "status": { "type": "string", "description": "Model status, e.g. 'stable', 'beta', 'deprecated'." },
+                    "provider": { "type": "string" },
+                    "options": { "type": "object", "additionalProperties": true },
+                    "headers": { "type": "object", "additionalProperties": { "type": "string" } },
+                    "variants": { "type": "object", "additionalProperties": true, "description": "Named variants of this model (typically reasoning-effort levels), selectable as `<model>#<variant>`." },
+                    "cost": { "type": "object", "additionalProperties": true, "description": "Pricing info, either a token-cost object or a lookup id." },
+                    "limit": { "type": "object", "additionalProperties": true, "properties": { "context": { "type": "integer", "minimum": 1, "description": "Context window in tokens." }, "output": { "type": "integer", "minimum": 1, "description": "Max output tokens per request." } } },
+                    "modalities": { "type": "object", "additionalProperties": true, "description": "Input/output modalities. opencode reads modalities from its built-in registry, not from a custom endpoint's /models — declare `input: [\"image\"]` here or image attachments are silently dropped.", "properties": { "input": { "type": "array", "items": { "type": "string", "enum": ["text", "image", "audio", "video", "pdf"] } }, "output": { "type": "array", "items": { "type": "string", "enum": ["text", "image", "audio"] } } } }
                   }
                 }
               }
             }
           }
         },
-        "model": {
-          "type": "string",
-          "description": "Primary model id (e.g. 'gpt-4o', 'claude-sonnet-4-5'). Provider-specific; consult your provider's model list."
-        },
-        "small_model": {
-          "type": "string",
-          "description": "Smaller / faster model used for lightweight tasks (title generation, summarization, etc.)."
-        },
-        "default_agent": {
-          "type": "string",
-          "description": "Default agent name (matches an entry under `agent.<name>`)."
-        },
-        "username": {
-          "type": "string",
-          "description": "Display name shown in the opencode UI."
-        },
-        "autoupdate": {
-          "type": "string",
-          "enum": ["true", "false", "notify"],
-          "description": "Auto-update behavior. `notify` shows a banner; `true` updates silently; `false` disables."
-        },
-        "share": {
-          "type": "string",
-          "enum": ["manual", "auto", "disabled"],
-          "description": "Session sharing mode."
-        },
-        "logLevel": {
-          "type": "string",
-          "enum": ["DEBUG", "INFO", "WARN", "ERROR"],
-          "description": "Server log verbosity."
-        },
-        "snapshot": {
-          "type": "boolean",
-          "description": "Enable session snapshots (allows reverting the workspace state)."
-        },
-        "subagent_depth": {
-          "type": "integer",
-          "minimum": 0,
-          "maximum": 10,
-          "description": "Maximum nesting depth for sub-agents. 0 disables sub-agents."
-        },
-        "instructions": {
-          "type": "array",
-          "items": { "type": "string" },
-          "description": "Additional system instructions appended to the default prompt."
-        },
-        "disabled_providers": {
-          "type": "array",
-          "items": { "type": "string" },
-          "description": "Provider ids to hide from the opencode UI."
-        },
-        "enabled_providers": {
-          "type": "array",
-          "items": { "type": "string" },
-          "description": "Provider ids to show in the opencode UI. Empty = all enabled."
-        },
-        "permission": {
+
+        "providers": {
           "type": "object",
-          "description": "Tool permission rules. Free-form; consult opencode docs for the schema.",
-          "additionalProperties": true
-        },
-        "agent": {
-          "type": "object",
-          "description": "Named agent configurations (model + system prompt). Free-form; consult opencode docs for the schema.",
-          "additionalProperties": true
-        },
-        "formatter": {
-          "type": "object",
-          "description": "Code formatter overrides. Free-form.",
-          "additionalProperties": true
-        },
-        "lsp": {
-          "type": "object",
-          "description": "LSP server overrides. Free-form.",
-          "additionalProperties": true
-        },
-        "mcp": {
-          "type": "object",
-          "description": "MCP server configurations. Free-form.",
-          "additionalProperties": true
-        },
-        "plugin": {
-          "type": "array",
-          "description": "Plugin specifications. Free-form.",
-          "additionalProperties": true
-        },
-        "shell": {
-          "type": "string",
-          "description": "Shell binary used for command execution (e.g. '/bin/bash')."
-        },
-        "skills": {
-          "type": "object",
-          "description": "Skill enable/disable map. Free-form.",
-          "additionalProperties": true
-        },
-        "watcher": {
-          "type": "object",
-          "description": "File watcher settings. Free-form.",
-          "additionalProperties": true
-        },
-        "server": {
-          "type": "object",
-          "description": "opencode web server settings.",
-          "additionalProperties": true,
-          "properties": {
-            "port": {
-              "type": "integer",
-              "minimum": 1,
-              "maximum": 65535,
-              "description": "TCP port the web server binds to (default 8080)."
-            },
-            "hostname": {
-              "type": "string",
-              "description": "Bind hostname (default 127.0.0.1). Use 0.0.0.0 to expose on all interfaces."
-            },
-            "cors": {
-              "type": "array",
-              "items": { "type": "string" },
-              "description": "Origins allowed by CORS (e.g. ['https://app.example.com'])."
-            },
-            "mdns": {
-              "type": "boolean",
-              "description": "Advertise the server over mDNS for local discovery."
-            },
-            "mdnsDomain": {
-              "type": "string",
-              "description": "mDNS domain (default 'opencode.local')."
+          "description": "Provider map, keyed by provider id. This is the current form, and the target the legacy `provider` map is migrated into. Field names differ from the legacy shape: `package` (not `npm`), `settings` (not `options`), `modelID`/`releaseDate` in camelCase. Upstream sets additionalProperties:false on this shape, but this schema stays permissive so power users can add provider-plugin fields in raw mode.",
+          "minProperties": 1,
+          "additionalProperties": {
+            "type": "object",
+            "additionalProperties": true,
+            "properties": {
+              "canonical": { "type": "string", "description": "Canonical provider id this entry routes to. Use to alias a custom endpoint onto another vendor's model namespace." },
+              "name": { "type": "string", "description": "Display name shown for this provider in the opencode UI. opencode matches this against the name used in `/connect`." },
+              "env": { "type": "array", "items": { "type": "string" }, "description": "Environment variable names to read for this provider's credentials, in priority order." },
+              "package": {
+                "type": "string",
+                "description": "NPM package implementing this provider's SDK. An OpenAI-compatible custom endpoint uses `@ai-sdk/openai-compatible`.",
+                "examples": ["@ai-sdk/openai-compatible", "@ai-sdk/anthropic", "@ai-sdk/openai"]
+              },
+              "compatibility": {
+                "type": "object",
+                "description": "Payload-shaping flags for providers whose wire format deviates from what the adapter assumes.",
+                "additionalProperties": true,
+                "properties": {
+                  "reasoningField": { "type": "string", "description": "Field carrying the reasoning payload, when the provider's differs from the adapter default." },
+                  "requireReasoning": { "type": "boolean" },
+                  "maxTokensField": { "type": "string", "description": "Field carrying the max-tokens setting." },
+                  "requireFinishReason": { "type": "boolean" },
+                  "requireAssistantAfterTool": { "type": "boolean" },
+                  "supportsPromptCacheKey": { "type": "boolean" },
+                  "streamUsage": { "type": "boolean" },
+                  "cacheFormat": { "type": "string", "description": "Prompt-cache wire format the provider expects." }
+                }
+              },
+              "settings": {
+                "type": "object",
+                "description": "Provider connection and runtime settings. This is where `baseURL` and `apiKey` live in the modern form.",
+                "additionalProperties": true,
+                "properties": {
+                  "baseURL": { "type": "string", "format": "uri", "description": "Provider endpoint base URL. Must include the `/v1` suffix for OpenAI-compatible endpoints." },
+                  "apiKey": { "type": "string", "format": "password", "description": "API key. Auto-injected from the bound virtual key at deploy time — leave the placeholder.", "x-secret-source": "virtual_key" },
+                  "enterpriseUrl": { "type": "string", "description": "GitHub Enterprise URL, for copilot authentication." },
+                  "setCacheKey": { "type": "boolean", "description": "Enable promptCacheKey for this provider (default false)." },
+                  "timeout": { "description": "Timeout in milliseconds for full requests to this provider, or `false` to disable.", "oneOf": [{ "type": "number", "exclusiveMinimum": 0 }, { "type": "boolean", "enum": [false] }] },
+                  "headerTimeout": { "description": "Milliseconds to wait for response headers (default 300000), or `false` to disable.", "oneOf": [{ "type": "number", "exclusiveMinimum": 0 }, { "type": "boolean", "enum": [false] }] },
+                  "chunkTimeout": { "description": "Milliseconds between streamed SSE chunks (default 300000), or `false` to disable.", "oneOf": [{ "type": "number", "exclusiveMinimum": 0 }, { "type": "boolean", "enum": [false] }] },
+                  "compaction": { "description": "Context-compaction strategy for this provider: `{type: \"summary\"}` (openclaw does the summarizing) or `{type: \"native\"}` (delegate to the provider).", "oneOf": [{ "type": "object", "additionalProperties": true }, { "type": "string" }] },
+                  "transport": { "type": "string", "description": "Request transport implementation." },
+                  "encoding": { "type": "string", "description": "Request/response encoding." }
+                }
+              },
+              "headers": { "type": "object", "additionalProperties": { "type": "string" }, "description": "Static headers merged into every request to this provider." },
+              "body": { "type": "object", "additionalProperties": true, "description": "Extra JSON merged into every request body." },
+              "models": {
+                "type": "object",
+                "description": "Models this provider serves, keyed by model id. Must be declared for a custom endpoint — opencode cannot discover it.",
+                "minProperties": 1,
+                "additionalProperties": {
+                  "type": "object",
+                  "additionalProperties": true,
+                  "properties": {
+                    "modelID": { "type": "string", "description": "Model id as the provider knows it. Normally the map key is the id, so this is redundant; set it only when they differ." },
+                    "name": { "type": "string", "description": "Display name in the opencode model picker." },
+                    "family": { "type": "string", "description": "Model family, used to group variants and pick prompt overlays." },
+                    "releaseDate": { "type": "string", "description": "Release date (YYYY-MM-DD). camelCase here; the legacy form uses `release_date`." },
+                    "package": { "type": "string", "description": "Per-model NPM package override." },
+                    "settings": { "type": "object", "additionalProperties": true, "description": "Per-model runtime settings (compaction, encoding)." },
+                    "compatibility": { "type": "object", "additionalProperties": true, "description": "Per-model wire-format compatibility flags." },
+                    "headers": { "type": "object", "additionalProperties": { "type": "string" } },
+                    "body": { "type": "object", "additionalProperties": true },
+                    "cost": { "type": "object", "additionalProperties": true, "description": "Pricing info, either a token-cost object or a lookup id." },
+                    "limit": { "type": "object", "additionalProperties": true, "description": "Context window and output budget. Declare these for a custom endpoint so opencode does not guess from the model name.", "properties": { "context": { "type": "integer", "minimum": 1, "description": "Context window in tokens." }, "output": { "type": "integer", "minimum": 1, "description": "Max output tokens per request." } } },
+                    "capabilities": { "type": "object", "additionalProperties": true, "description": "Declared model capabilities, including input modalities. Declare image input here or attachments are silently dropped for a custom endpoint." },
+                    "variants": { "type": "object", "additionalProperties": true, "description": "Named variants (typically reasoning-effort levels), selectable as `<model>#<variant>`." },
+                    "disabled": { "type": "boolean", "description": "Hide this model from the picker without deleting the entry." }
+                  }
+                }
+              }
             }
           }
-        }
+        },
+
+        "model": {
+          "description": "Default model, used when no session or agent model is selected. Either a `<providerId>/<modelId>` string (optionally `#<variant>`), or an object naming the parts explicitly.",
+          "oneOf": [
+            {
+              "type": "string",
+              "pattern": "^[^/#]+/[^#]+(?:#[^#]+)?$",
+              "description": "Model ref as `<providerId>/<modelId>`, optionally `#<variant>`. The provider id is a key of `providers` (or legacy `provider`); the model id is a key of that provider's `models`.",
+              "examples": ["litellm/qwen3.5-9b", "anthropic/claude-sonnet-4-5", "openai/gpt-4o#high"]
+            },
+            {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["providerID", "model"],
+              "properties": {
+                "providerID": { "type": "string", "pattern": "^[^/#]+$", "description": "Provider id — a key of `providers`." },
+                "model": { "type": "string", "pattern": "^[^#]+$", "description": "Model id — a key of that provider's `models`." },
+                "variant": { "type": "string", "pattern": "^[^#]+$", "description": "Reasoning-effort variant, as declared under that model's `variants`." }
+              }
+            }
+          ]
+        },
+
+        "default_agent": { "type": "string", "description": "Agent to select when a session starts. Matches an entry under `agents`." },
+
+        "agents": {
+          "type": "object",
+          "description": "Named agent configurations, keyed by agent name. Current form; supersedes the legacy `agent` map.",
+          "additionalProperties": {
+            "type": "object",
+            "additionalProperties": true,
+            "properties": {
+              "model": { "description": "Model this agent uses. Same `<providerId>/<modelId>` string form as the top-level `model`." },
+              "variant": { "type": "string", "description": "Reasoning-effort variant appended to the model ref." },
+              "prompt": { "type": "string", "description": "System prompt for this agent." },
+              "description": { "type": "string", "description": "One-line description shown in the agent picker." },
+              "mode": { "type": "string", "enum": ["primary", "subagent", "all"], "description": "Agent role. `primary` agents are offered directly; `subagent` agents are only invoked by other agents. The binary stamps `mode: \"primary\"` onto entries migrated from the legacy top-level `agent` map." },
+              "temperature": { "type": "number" },
+              "top_p": { "type": "number" },
+              "options": { "type": "object", "additionalProperties": true },
+              "disable": { "type": "object", "additionalProperties": true, "description": "Disable specific tools for this agent." },
+              "permission": { "type": "object", "additionalProperties": true, "description": "Per-agent permission overrides, same shape as the top-level `permission` map." },
+              "tools": { "type": "object", "additionalProperties": true, "description": "Per-agent tool overrides." }
+            },
+            "not": {
+              "required": ["permissions"],
+              "description": "The V2 rule-array `permissions` key is not part of the V1 config format. 1.19.0 aborts at startup with \"V2 permissions are not supported by OpenCode V1\" if it is present — in a per-agent entry too, not just at the top level — so reject it here rather than let it through validation and fail the agent later. Use the `permission` map."
+            }
+          }
+        },
+
+        "agent": {
+          "type": "object",
+          "description": "LEGACY agent map. Migrated into `agents` on load, with `mode: \"primary\"` stamped on each entry; deprecated upstream.",
+          "additionalProperties": {
+            "type": "object",
+            "additionalProperties": true,
+            "not": {
+              "required": ["permissions"],
+              "description": "The V2 rule-array `permissions` key is not part of the V1 config format. 1.19.0 aborts at startup with \"V2 permissions are not supported by OpenCode V1\" if it is present — in a per-agent entry too, not just at the top level — so reject it here rather than let it through validation and fail the agent later. Use the `permission` map."
+            }
+          }
+        },
+
+        "permission": { "type": "object", "additionalProperties": true, "description": "Permission map (tool action -> effect, or tool -> resource -> effect). This is the ONLY permission form 1.19.0 accepts — the V2 rule-array `permissions` key does not exist in this build and makes the binary refuse to start." },
+
+        "tools": { "type": "object", "additionalProperties": { "type": "boolean" }, "description": "Tool enable/disable map, flattened into the `permission` map on load." },
+
+        "snapshots": { "type": "boolean", "description": "Enable session snapshots, letting the workspace state be reverted. Current key; `snapshot` is the deprecated alias." },
+        "snapshot": { "type": "boolean", "description": "LEGACY alias for `snapshots`. Deprecated upstream; migrated on load." },
+
+        "share": { "type": "string", "description": "Session sharing mode. The legacy boolean `autoshare: true` migrates to `share: \"auto\"`.", "examples": ["manual", "auto", "disabled"] },
+
+        "update": { "type": "string", "description": "Auto-update behavior: `true` updates silently, `false` disables, `notify` shows a banner. Current replacement for the deprecated `autoupdate`.", "examples": ["true", "false", "notify"] },
+        "autoupdate": { "type": "string", "enum": ["true", "false", "notify"], "description": "LEGACY auto-update behavior. Deprecated upstream; use `update`.", "default": "notify" },
+
+        "enabled_providers": { "type": "array", "items": { "type": "string" }, "description": "LEGACY allow-list of provider ids. Deprecated upstream and NOT migrated by the 1.19.0 binary — it has no effect. Declared only so existing configs still validate; drop it and rely on the `provider`/`providers` map alone." },
+        "disabled_providers": { "type": "array", "items": { "type": "string" }, "description": "LEGACY deny-list of provider ids. Deprecated upstream and NOT migrated by the 1.19.0 binary — it has no effect. Remove the provider entry from `provider`/`providers` instead." },
+        "small_model": { "type": "string", "description": "LEGACY smaller/faster model for lightweight tasks. Deprecated upstream and NOT migrated by the 1.19.0 binary — it has no effect. Use a per-agent `model` instead.", "examples": ["litellm/qwen3.5-9b"] },
+        "subagent_depth": { "type": "integer", "minimum": 0, "description": "LEGACY sub-agent nesting depth limit. Deprecated upstream and NOT migrated by the 1.19.0 binary — it has no effect.", "examples": [3] },
+
+        "logLevel": { "type": "string", "enum": ["DEBUG", "INFO", "WARN", "ERROR"], "description": "LEGACY log verbosity. Deprecated upstream. NOTE: 1.19.0 exposes no replacement key in its schema — `logLevel` is carried for existing configs but marked deprecated, so leave it unset unless the user explicitly asks for it." },
+
+        "watcher": { "type": "object", "additionalProperties": true, "description": "File-watcher settings." },
+
+        "server": { "type": "object", "additionalProperties": true, "description": "LEGACY web-server settings. Deprecated upstream.", "properties": { "port": { "type": "integer", "minimum": 1, "maximum": 65535 }, "hostname": { "type": "string" }, "cors": { "type": "array", "items": { "type": "string" } }, "mdns": { "type": "boolean" }, "mdnsDomain": { "type": "string" } } },
+
+        "username": { "type": "string", "description": "Display name shown in the opencode UI." },
+        "shell": { "type": "string", "description": "Shell binary used for command execution (e.g. '/bin/bash')." },
+        "instructions": { "type": "array", "items": { "type": "string" }, "description": "System instructions appended to the default prompt." },
+        "commands": { "type": "object", "additionalProperties": true, "description": "Custom slash commands. Migrated from the deprecated `command` key." },
+        "references": { "type": "object", "additionalProperties": true, "description": "Reference documents made available to the agent. Migrated from the deprecated `reference` key." },
+        "enterprise": { "type": "object", "additionalProperties": true, "description": "Enterprise deployment settings." },
+        "compaction": { "type": "object", "additionalProperties": true, "description": "Context-compaction settings (auto, prune, keep.tokens, keep.buffer)." },
+        "tool_output": { "type": "object", "additionalProperties": true, "description": "How tool output is truncated / retained." },
+        "media": { "type": "object", "additionalProperties": true, "description": "Media handling settings." },
+        "experimental": { "type": "object", "additionalProperties": true, "description": "Opt-in experimental features, e.g. `policies`." },
+        "policies": { "type": "array", "items": { "type": "string" }, "description": "Policy identifiers to enforce." },
+        "warming": { "type": "object", "additionalProperties": true, "description": "Model warming / prefill settings." },
+        "formatter": { "type": "object", "additionalProperties": true, "description": "Code formatter overrides. Free-form." },
+        "lsp": { "type": "object", "additionalProperties": true, "description": "LSP server overrides. Free-form." },
+        "mcp": { "type": "object", "additionalProperties": true, "description": "MCP server configurations. Free-form." },
+        "plugins": { "type": "array", "items": {}, "description": "Plugin specs — a package name, or a `[package, options]` pair. Migrated from the deprecated singular `plugin` key." },
+        "skills": { "description": "Skill sources: local paths and/or URLs. The binary flattens this into a plain path list on load.", "oneOf": [{ "type": "array", "items": { "type": "string" } }, { "type": "object", "additionalProperties": true }] },
+        "websearch": { "description": "Web-search provider selection.", "oneOf": [{ "type": "string" }, { "type": "object", "additionalProperties": true }] },
+        "worktree": { "type": "object", "additionalProperties": true, "description": "Isolated git worktree for edits.", "properties": { "directory": { "type": "string" } } },
+        "layout": { "type": "object", "additionalProperties": true, "description": "LEGACY TUI layout overrides. Deprecated upstream." },
+        "attachment": { "type": "object", "additionalProperties": true, "description": "LEGACY attachment settings. Deprecated upstream; migrated to the current shape." },
+        "autoshare": { "type": "boolean", "description": "LEGACY boolean alias for `share`. `true` migrates to `share: \"auto\"`; deprecated upstream." },
+        "command": { "type": "object", "additionalProperties": true, "description": "LEGACY custom slash commands. Migrated into `commands` on load; deprecated upstream." },
+        "mode": {
+          "type": "object",
+          "description": "LEGACY agent map (new agents carrying `mode: \"primary\"`). Merged into `agents` on load; deprecated upstream.",
+          "additionalProperties": {
+            "type": "object",
+            "additionalProperties": true,
+            "not": {
+              "required": ["permissions"],
+              "description": "The V2 rule-array `permissions` key is not part of the V1 config format. 1.19.0 aborts at startup with \"V2 permissions are not supported by OpenCode V1\" if it is present — in a per-agent entry too, not just at the top level — so reject it here rather than let it through validation and fail the agent later. Use the `permission` map."
+            }
+          }
+        },
+        "plugin": { "type": "array", "items": {}, "description": "LEGACY singular plugin list. Migrated into `plugins` on load; deprecated upstream." },
+        "reference": { "type": "object", "additionalProperties": true, "description": "LEGACY reference documents. Migrated into `references` on load; deprecated upstream." }
       }
     }
   }

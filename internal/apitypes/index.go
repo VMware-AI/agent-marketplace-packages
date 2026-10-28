@@ -42,6 +42,43 @@ type Version struct {
 	ReleasedAt string   `json:"released_at,omitempty"`
 	Tarball    Tarball  `json:"tarball"`
 	Manifest   Manifest `json:"manifest"`
+	// Config points at the version's config/schema.json + config/example.*,
+	// copied into dist/config/ at build time so the API can serve them
+	// without unpacking the tarball. Nil when the version ships no config/
+	// directory — see ConfigFiles.Status.
+	Config *ConfigFiles `json:"config,omitempty"`
+}
+
+// Config-files status values. These are the states the platform uses to decide
+// whether it can render a schema-driven form or must fall back to a raw editor.
+const (
+	// ConfigStatusMissing — the version ships no config/ directory at all. The
+	// frontend can only offer a raw editor, with no validation.
+	ConfigStatusMissing = "missing"
+	// ConfigStatusPartial — config/ exists but carries no top-level
+	// config/schema.json (e.g. only per-slot <slot>.schema.json fragments).
+	// Schema'd slots render a form; the rest are raw-only.
+	ConfigStatusPartial = "partial"
+	// ConfigStatusOK — config/schema.json is present and describes every slot.
+	// All slots render a form and validate against the schema.
+	ConfigStatusOK = "ok"
+)
+
+// ConfigFiles records where a version's config-contract files live under
+// dist/, and whether the schema is usable.
+//
+// Schema and Example are paths relative to the dist root, which is also what
+// the /config/schema and /config/example endpoints resolve against.
+//
+// ExampleFormat is "json" or "yaml" — it mirrors the on-disk extension so a
+// client can set the right Content-Type without sniffing. The endpoint already
+// derives it from the file itself; it is duplicated here so a client that only
+// reads the index (no extra request) can render the right editor mode.
+type ConfigFiles struct {
+	Schema        string `json:"schema,omitempty"`
+	Example       string `json:"example,omitempty"`
+	ExampleFormat string `json:"example_format,omitempty"`
+	Status        string `json:"status"`
 }
 
 // Tarball points at the actual tarball in dist/.
@@ -87,30 +124,17 @@ type ServiceSpec struct {
 	Description string   `json:"description,omitempty"`
 }
 
-// ConfigSpec mirrors internal/manifest.ConfigSpec. The RequiredInputs /
-// OptionalInputs / SupportedProviders fields expose the manifest-driven
-// config schema so external clients (daemon, Control UI) can introspect
-// what fields each version expects without parsing manifest.json.
+// ConfigSpec mirrors internal/manifest.ConfigSpec — the delivery contract for
+// one config file. The shape contract (which fields the rendered file may
+// contain) lives in the agent's config/schema.json, served separately by the
+// /config/schema endpoint. `Name` must match a top-level key in that schema's
+// `properties`.
 type ConfigSpec struct {
-	Name               string                `json:"name"`
-	File               string                `json:"file"`
-	RenderTo           string                `json:"render_to"`
-	Mode               string                `json:"mode"`
-	RequiredInputs     []InputField          `json:"required_inputs,omitempty"`
-	OptionalInputs     map[string]InputField `json:"optional_inputs,omitempty"`
-	SupportedProviders *SupportedProviders   `json:"supported_providers,omitempty"`
-}
-
-// InputField is one input declared by an agent's manifest. See
-// internal/manifest.InputField for the field semantics.
-type InputField struct {
-	InputKey       string   `json:"input_key,omitempty"`
-	JsonPath       string   `json:"json_path"`
-	Type           string   `json:"type"`
-	RequiredWhen   string   `json:"required_when,omitempty"`
-	EnumValues     []string `json:"enum_values,omitempty"`
-	Validate       string   `json:"validate,omitempty"`
-	DynamicResolve string   `json:"dynamic_resolve,omitempty"`
+	Name               string              `json:"name"`
+	File               string              `json:"file"`
+	RenderTo           string              `json:"render_to"`
+	Mode               string              `json:"mode"`
+	SupportedProviders *SupportedProviders `json:"supported_providers,omitempty"`
 }
 
 // SupportedProviders mirrors internal/manifest.SupportedProviders.

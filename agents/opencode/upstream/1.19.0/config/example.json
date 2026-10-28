@@ -1,0 +1,23 @@
+{
+  "opencode": {
+    "$schema": "https://opencode.ai/config.json",
+    "enabled_providers": ["litellm"],
+    "disabled_providers": [],
+    "model": "litellm/qwen3.5-9b",
+    "provider": {
+      "litellm": {
+        "npm": "@ai-sdk/openai-compatible",
+        "name": "litellm",
+        "options": {
+          "baseURL": "http://GATEWAY-IP:4000/v1",
+          "apiKey": "KEY-PLACEHOLDER"
+        },
+        "models": {
+          "qwen3.5-9b": {
+            "name": "qwen3.5-9b"
+          }
+        }
+      }
+    }
+  }
+}
