@@ -26,6 +26,16 @@ BUNDLE_DIR="agents/$AGENT/$SOURCE/$VERSION"
 [[ -f "$BUNDLE_DIR/manifest.json" ]] || err "$BUNDLE_DIR/manifest.json missing"
 [[ -x "$BUNDLE_DIR/install.sh" ]] || err "$BUNDLE_DIR/install.sh is missing or not executable"
 
+# Refuse to pack an incomplete payload.  A vendored tree that is missing a
+# chunk still installs cleanly and only fails later, at agent startup, with
+# "Gateway failed to start: Cannot find module ...".  Catching it here means
+# the broken tarball never reaches the marketplace.
+if [[ -d "$BUNDLE_DIR/payload" ]]; then
+  log "checking payload completeness ..."
+  python3 "$SCRIPT_DIR/verify-payload.py" "$BUNDLE_DIR" \
+    || err "payload is incomplete — refusing to pack (see errors above)"
+fi
+
 mkdir -p "$OUT_DIR"
 
 TARBALL_NAME="${AGENT}-${SOURCE}-${VERSION}.tar.gz"
@@ -151,20 +161,23 @@ if [[ "$HAS_META" -eq 1 ]]; then
   # the Go side, and what buildIndexFromDir's extractTarballFiles expects
   # to read.
   #
-  # bsdtar (macOS default) doesn't accept multiple `-C` flags, so we stage
-  # into a temp dir first: symlink meta.yaml + the version dir side by
-  # side, then tar the staging root. This is platform-portable (GNU tar
-  # on Linux would do it in one shot via two `-C`s, but we want the same
-  # script to work on both without GNU-tar dependency).
-  STAGE="$(mktemp -d -t pack-stage.XXXXXX)"
-  trap 'rm -rf "$STAGE"' EXIT
-  ln -s "$REPO_ROOT/$BUNDLE_PARENT/$BUNDLE_BASE" "$STAGE/$BUNDLE_BASE"
-  ln -s "$REPO_ROOT/$AGENT_ROOT_DIR/meta.yaml" "$STAGE/meta.yaml"
+  # Two `-C` flags (both bsdtar and GNU tar accept them) put both paths at
+  # the tarball root without staging a copy of the tree.
+  #
+  # DO NOT add `-h` / `--dereference` here.  The payload contains symlinks —
+  # notably payload/openclaw/bin/openclaw -> ../lib/node_modules/openclaw/
+  # openclaw.mjs — and dereferencing replaces the link with a copy of its
+  # target.  The launcher then resolves "./dist/entry.js" against the
+  # import.meta.url of a file that now sits in bin/, the lookup misses, and
+  # the gateway dies with "openclaw: missing dist/entry.(m)js (build
+  # output)".  The old staging approach (symlink the version dir into a temp
+  # dir, then tar with -h) forced that dereference; two -C flags remove the
+  # need for it.
   if COPYFILE_DISABLE=1 tar -czf "$TMP_TARBALL" \
-       -h \
        --owner=0 --group=0 --numeric-owner \
        --no-xattrs --no-mac-metadata \
-       -C "$STAGE" "meta.yaml" "$BUNDLE_BASE"; then
+       -C "$REPO_ROOT/$BUNDLE_PARENT" "$BUNDLE_BASE" \
+       -C "$REPO_ROOT/$AGENT_ROOT_DIR" "meta.yaml"; then
     :
   else
     err "tar failed (with meta.yaml)"
@@ -173,13 +186,22 @@ else
   if COPYFILE_DISABLE=1 tar -czf "$TMP_TARBALL" \
        --owner=0 --group=0 --numeric-owner \
        --no-xattrs --no-mac-metadata \
-       -C "$BUNDLE_PARENT" \
+       -C "$REPO_ROOT/$BUNDLE_PARENT" \
        "$BUNDLE_BASE"; then
     :
   else
     err "tar failed"
   fi
 fi
+
+# The tarball must be a faithful copy of the bundle.  tar's -h /
+# --dereference silently replaces a symlink with a copy of its target, which
+# is invisible in a file listing and breaks launchers that resolve
+# "./dist/entry.js" against their own import.meta.url.  Verify it instead of
+# trusting it — a broken tarball installs cleanly and only fails at runtime.
+log "verifying tarball against source bundle ..."
+python3 "$SCRIPT_DIR/verify-tarball.py" "$BUNDLE_DIR" "$TMP_TARBALL" \
+  || err "tarball does not match the source bundle (see errors above)"
 
 TAR_SHA="$(sha256sum "$TMP_TARBALL" | awk '{print $1}')"
 ok "tarball SHA256: $TAR_SHA"

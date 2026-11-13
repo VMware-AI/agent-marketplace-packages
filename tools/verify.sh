@@ -19,6 +19,10 @@
 #   3. every file referenced by manifest.payload exists
 #   4. every file in manifest.checksums exists and matches
 #   5. dist/<name>.tar.gz.sha256 (if present) matches manifest.tarball.sha256
+#   6. every relative module import inside payload/ resolves to a file that
+#      exists (tools/verify-payload.py)
+#   7. dist/<name>.tar.gz (if present) is a faithful copy of the bundle —
+#      same paths, symlinks preserved (tools/verify-tarball.py)
 #
 # NOT checking here (install.sh does it on target):
 #   - system tool presence on the host (the verify host != install host)
@@ -203,6 +207,36 @@ os.unlink(tbd_path)
 PYEOF
 
     ok "manifest.json updated — re-run verify.sh to confirm clean"
+  fi
+
+  # The vendored payload must be complete: every relative module import it
+  # contains has to resolve to a file that is actually there.  A payload that
+  # is missing a chunk still installs cleanly (the missing module is usually
+  # reached through a lazy `await import(...)`) and only blows up later, at
+  # agent startup, as "Cannot find module ...".
+  if [[ -d "$BUNDLE_DIR/payload" ]]; then
+    if python3 "$SCRIPT_DIR/verify-payload.py" "$BUNDLE_DIR"; then
+      ok "payload imports resolve"
+    else
+      err "payload is incomplete — unresolved relative imports (see above)"
+      BUNDLE_OK=0
+    fi
+  fi
+
+  # A built tarball must be a faithful copy of this bundle.  tar's
+  # -h / --dereference silently replaces a symlink with a copy of its
+  # target; for the openclaw launcher that is fatal (it resolves
+  # "./dist/entry.js" against its own import.meta.url, so a dereferenced
+  # bin/openclaw looks in the wrong directory and the gateway dies with
+  # "missing dist/entry.(m)js").
+  DIST_TARBALL="dist/${AGENT}-${SOURCE_TREE}-${VERSION}.tar.gz"
+  if [[ -f "$DIST_TARBALL" ]]; then
+    if python3 "$SCRIPT_DIR/verify-tarball.py" "$BUNDLE_DIR" "$DIST_TARBALL"; then
+      ok "dist tarball matches the bundle (symlinks preserved)"
+    else
+      err "dist tarball does not match the bundle (see above)"
+      BUNDLE_OK=0
+    fi
   fi
 
   if [[ $BUNDLE_OK -eq 1 ]]; then

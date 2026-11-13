@@ -80,6 +80,73 @@ python3 -m pip download \
 
 **Runtime（Node / Python / uv）不打进 tarball**。这些在 target 机上用 `./tools/install-runtime.sh` 装，版本约束写在 `manifest.runtime_requirements` 里。
 
+### 校验 payload 完整性（必做）
+
+`payload/` 是 vendored 上去的目录，**不在 git 里**（`.gitignore` 忽略了 `dist/` 和
+`node_modules/`），所以只有本地这一份。预解析过程一旦漏文件，没有任何东西会报错——
+安装照样成功（缺的那个模块通常是通过 `await import(...)` 懒加载的），直到 agent 启动
+时才炸：
+
+```
+Gateway failed to start: Cannot find module
+'.../dist/server-node-session-runtime-jbxtNSFm.js' imported from
+'.../dist/server.impl-qYPVZMND.js'
+```
+
+所以每次重新解析 payload 之后、打包之前，跑：
+
+```bash
+python3 tools/verify-payload.py agents/<agent>/upstream/<version>
+```
+
+它会检查 payload 里每个 JS 文件的相对 import 是否都指向真实存在的文件。
+`tools/pack.sh` 和 `tools/verify.sh` 都已经接上了这一步——**payload 不完整就直接拒绝打包**。
+
+更强的校验是把 payload 和上游 artifact 逐文件对比（npm 包可以拿
+`registry.npmjs.org/<pkg>/-/<pkg>-<version>.tgz` 的 tarball 比），本仓库目前只做到了
+import 可解析这一层。
+
+### 符号链接必须保留（打包阶段）
+
+`payload/` 里还有符号链接，其中最要命的是：
+
+```
+payload/openclaw/bin/openclaw -> ../lib/node_modules/openclaw/openclaw.mjs
+```
+
+**打包时绝不能解引用**。tar 的 `-h` / `--dereference` 会把链接换成目标文件的副本，
+而 launcher 是靠 `import.meta.url` 找入口的：
+
+```js
+await import("./dist/entry.js")   // 相对 import.meta.url 解析
+```
+
+链接还在时，Node 把 `import.meta.url` 解析成 realpath
+（`lib/node_modules/openclaw/openclaw.mjs`），`./dist/entry.js` 正好在旁边；
+一旦被解引用成副本，`import.meta.url` 就指向 `bin/`，`bin/dist/entry.js` 不存在，
+gateway 直接起不来：
+
+```
+Error: openclaw: missing dist/entry.(m)js (build output).
+```
+
+这个故障 `openclaw --version` 查不出来——`--version` 走 launcher 的 fast path，
+根本不 import `dist/entry.js`。
+
+所以打包后必须验证 tarball 是 bundle 的忠实副本：
+
+```bash
+python3 tools/verify-tarball.py agents/<agent>/upstream/<version> \
+  dist/<agent>-<source>-<version>.tar.gz
+```
+
+它检查路径齐全、符号链接仍是符号链接（且 target 一致）、没有多出来的文件。
+`tools/pack.sh` 和 `tools/verify.sh` 都接上了这一步。
+
+> `tools/pack.sh` 早期版本用 `ln -s` 把版本目录链进临时目录再 `tar -h`，
+> 这正是解引用的来源。现在改成两个 `-C` 参数（bsdtar 和 GNU tar 都支持），
+> 不再需要 `-h`。**别加回去。**
+
 ---
 
 ## 步骤 4 — 写 manifest.json
