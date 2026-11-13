@@ -73,9 +73,11 @@ type SkillVersion struct {
 
 	// === Schema v2.0 ===
 	//
-	// Agents lists the runtimes that recognize this skill payload.
-	// ["all"] means system-level (pip wheel / npm global).
-	// Empty list falls back to the all-sentinel at the install layer.
+	// Agents lists the runtimes that recognize the skill payload — the
+	// skill's AUDIENCE, not an install destination. ["all"] means
+	// "every runtime supports this skill"; the installer resolves it to
+	// the concrete runtime(s) the skill is installed for. Empty list is
+	// rejected at install time (there is no fallback destination).
 	Agents []string `json:"agents"`
 	// InstallMethod picks the install pipeline
 	// (zip-extract / pip-wheel / npm-pack / tarball).

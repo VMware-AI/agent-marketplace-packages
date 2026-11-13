@@ -28,17 +28,18 @@ describes the *type of agent*. The two vocabularies don't collapse — a
 
 ## Agents
 
-The set of runtimes that recognize this skill payload. The
-`agentpkg skills install` command materializes the artifact on the
-target machine **once per declared agent** (zip-extract only — system-wide
-methods collapse to one install target).
+The set of runtimes that recognize this skill payload — the skill's
+**audience**. It is not a destination: the install path is always a
+concrete runtime's own directory (see the table below), chosen by the
+installer (`agentpkg skills install --agents <csv>`, or every known
+runtime when that flag is omitted).
 
 | ID | Description |
 |----|-------------|
 | `opencode` | [opencode.ai](https://opencode.ai/) CLI |
 | `openclaw` | openclaw agent (our internal vendor agent) |
 | `hermes` | hermes-agent (Python) |
-| `all` | Sentinel — no agent-specific install path; uses the central fallback. Combine with concrete agents is rejected. |
+| `all` | Sentinel — every runtime supports this skill. Combine with concrete agents is rejected. |
 
 **Required.** At least one entry.
 
@@ -59,14 +60,14 @@ How `agentpkg skills install` should materialize the artifact.
 
 The marketplace uses these built-in per-agent install dirs. Each
 template uses `$HOME` and `$NAME` placeholders, expanded at install
-time. Override per-skill via `metadata.install_paths.<agent>`.
+time. Override per-skill via `metadata.install_paths.<agent>` (the key
+must be a concrete agent — there is no `all` path).
 
 | Agent | Default path | Source |
 |-------|--------------|--------|
 | `opencode` | `$HOME/.config/opencode/skills/$NAME` | opencode.ai/docs/skills (global location) |
 | `openclaw` | `$HOME/.openclaw/skills/$NAME` | openclaw docs/tools/skills.md (managed tier) |
 | `hermes` | `$HOME/.hermes/optional-skills/$NAME` | `hermes_constants.py:get_optional_skills_dir` (`HERMES_HOME/optional-skills`) |
-| `all` (fallback) | `$HOME/.local/share/agentpkg/skills/$NAME` | Central stash; also where `state.json` lives. |
 
 Override example:
 

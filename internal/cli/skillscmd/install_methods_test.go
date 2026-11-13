@@ -63,24 +63,35 @@ func makeTarGzWithFiles(t *testing.T, files map[string]string) []byte {
 	return buf.Bytes()
 }
 
-func TestResolveTargets_AllOnly(t *testing.T) {
+// TestResolveTargets_AllSentinelIsRejected: the "all" sentinel is an
+// audience declaration, never an install target. ResolveTargets only
+// ever sees concrete agents (skills.ResolveInstallTargets resolves the
+// audience + the caller's --agents selection into them beforehand), so
+// an unresolved "all" must be a hard error rather than a silent install
+// into some catch-all directory.
+func TestResolveTargets_AllSentinelIsRejected(t *testing.T) {
 	sv := &skills.SkillVersion{
 		Agents:        []string{"all"},
 		InstallMethod: "zip-extract",
 	}
-	targets, err := ResolveTargets(sv, "foo", "/tmp/skills", filepath.Join(t.TempDir(), "staging"))
-	if err != nil {
-		t.Fatalf("ResolveTargets: %v", err)
+	_, err := ResolveTargets(sv, "foo", "", filepath.Join(t.TempDir(), "staging"))
+	if err == nil {
+		t.Fatal("expected an error for the \"all\" sentinel, got nil")
 	}
-	defer CleanupStaging(targets)
-	if len(targets) != 1 {
-		t.Fatalf("got %d targets, want 1", len(targets))
+	if !strings.Contains(err.Error(), "not a concrete agent") {
+		t.Errorf("unexpected error message: %v", err)
 	}
-	if targets[0].Agent != "all" {
-		t.Errorf("Agent = %q, want all", targets[0].Agent)
+}
+
+// TestResolveTargets_EmptyAgentsIsRejected: no target agent means no
+// destination — an explicit error beats writing to a mystery path.
+func TestResolveTargets_EmptyAgentsIsRejected(t *testing.T) {
+	sv := &skills.SkillVersion{
+		InstallMethod: "zip-extract",
 	}
-	if targets[0].FinalPath != "/tmp/skills/foo" {
-		t.Errorf("FinalPath = %q, want /tmp/skills/foo", targets[0].FinalPath)
+	_, err := ResolveTargets(sv, "foo", "", filepath.Join(t.TempDir(), "staging"))
+	if err == nil {
+		t.Fatal("expected an error for an empty agent list, got nil")
 	}
 }
 

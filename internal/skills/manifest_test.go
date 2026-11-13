@@ -538,12 +538,10 @@ func TestManifest_Validate_InstallPaths(t *testing.T) {
 		{"two_ok", "  install_paths:\n    opencode: \"$HOME/.config/opencode/skills/$NAME\"\n    hermes: \"$HOME/.hermes/optional-skills/$NAME\"\n", false},
 		{"missing_name_placeholder_rejected", "  install_paths:\n    opencode: \"$HOME/.config/opencode/skills/foo\"\n", true},
 		{"unknown_agent_rejected", "  install_paths:\n    unknown: \"$HOME/.x/$NAME\"\n", true},
-		// "all" is now a valid install_paths key — paired with
-		// agents: [all], the value overrides the central-fallback
-		// path in ResolveTargets.
-		{"all_sentinel_ok", "  install_paths:\n    all: \"$HOME/.x/$NAME\"\n", false},
-		{"all_sentinel_empty_value_rejected", "  install_paths:\n    all: \"\"\n", true},
-		{"all_sentinel_missing_name_placeholder_rejected", "  install_paths:\n    all: \"$HOME/.x/foo\"\n", true},
+		// "all" is NOT a valid install_paths key: it declares the
+		// skill's audience, not a destination. The install path is
+		// always a concrete agent's own directory.
+		{"all_sentinel_rejected", "  install_paths:\n    all: \"$HOME/.x/$NAME\"\n", true},
 		{"empty_value_rejected", "  install_paths:\n    opencode: \"\"\n", true},
 		{"no_paths_ok", "", false},
 	}

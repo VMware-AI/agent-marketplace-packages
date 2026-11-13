@@ -325,19 +325,20 @@ func extractTarballToDir(tarPath, destDir string, stripComponents int) error {
 // ResolveTargets computes the InstallTarget list for a SkillVersion.
 //
 // Rules:
-//  1. For each agent in sv.Agents (excluding "all"), pick the path:
+//  1. For each agent in sv.Agents, pick the path:
 //     sv.InstallPaths[agent] if present, else skills.DefaultAgentInstallPaths[agent].
-//  2. If sv.Agents contains "all" or is empty, append skills.FallbackPath
-//     (under "all" key).
-//  3. Non-zip-extract methods only need one target (system-wide) — keep
+//     sv.Agents must already be resolved to CONCRETE agents — the "all"
+//     sentinel is an audience declaration, never an install target (see
+//     skills.ResolveInstallTargets).
+//  2. Non-zip-extract methods only need one target (system-wide) — keep
 //     the first entry and discard the rest.
-//  4. Dedup by FinalPath so two agents pointing at the same path don't
+//  3. Dedup by FinalPath so two agents pointing at the same path don't
 //     cause double-install.
-//  5. targetDirOverride (when non-empty) replaces FallbackPath AND the
-//     default-per-agent paths — i.e. it's a global root for ALL targets.
-//     This preserves the historical `--target-dir <dir>` CLI behavior
-//     where the user expects all skill files under <dir> regardless of
-//     which agent they target.
+//  4. targetDirOverride (when non-empty) replaces the per-agent paths
+//     with a global root for ALL targets — i.e. it's a global root for
+//     every agent. This preserves the historical `--target-dir <dir>` CLI
+//     behavior where the user expects all skill files under <dir> regardless
+//     of which agent they target.
 //
 // stagingParent is the parent dir for per-target staging directories;
 // callers typically pass t.TempDir() or os.TempDir(). One staging dir is
@@ -376,18 +377,12 @@ func ResolveTargets(sv *skills.SkillVersion, name, targetDirOverride, stagingPar
 		})
 	}
 
-	// Agents is required by Validate; empty is defensive only.
+	if len(sv.Agents) == 0 {
+		return nil, fmt.Errorf("skills: ResolveTargets: no target agent resolved for %q", name)
+	}
 	for _, a := range sv.Agents {
-		if a == "all" {
-			// Universal sentinel — honour the author's explicit
-			// `install_paths.all` override (validators now allow it)
-			// and fall back to the central FallbackPath when unset.
-			tpl := skills.FallbackPath
-			if override, ok := sv.InstallPaths["all"]; ok && override != "" {
-				tpl = override
-			}
-			add("all", tpl)
-			continue
+		if !skills.IsConcreteAgent(a) {
+			return nil, fmt.Errorf("skills: agent %q is not a concrete agent (the \"all\" sentinel is an audience, not an install target)", a)
 		}
 		if tpl, ok := sv.InstallPaths[a]; ok && tpl != "" {
 			add(a, tpl)
@@ -399,10 +394,6 @@ func ResolveTargets(sv *skills.SkillVersion, name, targetDirOverride, stagingPar
 		}
 		// agents[] was validated server-side, so we should never land here.
 		return nil, fmt.Errorf("skills: agent %q has no default install path and no override in install_paths", a)
-	}
-	if len(raw) == 0 {
-		// Defensive: empty Agents → fall back to central.
-		add("all", skills.FallbackPath)
 	}
 
 	// Non-zip-extract methods are system-wide; keep the first target.

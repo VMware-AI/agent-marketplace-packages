@@ -429,19 +429,20 @@ func (m *Manifest) Validate() error {
 	if m.Metadata.InstallMethod != "" && !IsValidInstallMethod(m.Metadata.InstallMethod) {
 		return fmt.Errorf("skills: metadata.install_method %q is not valid (want: zip-extract, pip-wheel, npm-pack, tarball)", m.Metadata.InstallMethod)
 	}
-	// install_paths: optional. Each key must be a known agent (incl. "all"
-	// for the universal-sentinel override); each value must contain $NAME
+	// install_paths: optional. Each key must be a concrete agent
+	// (opencode / openclaw / hermes); each value must contain $NAME
 	// so the template expands deterministically. We don't enforce $HOME
 	// presence (some setups use shared system trees) but the per-agent
-	// default always uses $HOME. The "all" key is valid: when an author
-	// ships `agents: [all]` with an explicit `install_paths.all`, the
-	// CLI uses that override at the central-fallback path
-	// (otherwise `ResolveTargets` falls back to FallbackPath). Letting
-	// "all" through here means a community skill can ship a custom
-	// install location without losing the "system-wide" semantic.
+	// default always uses $HOME.
+	//
+	// There is deliberately NO "all" key: "all" is an audience
+	// declaration (every runtime supports this skill), not a
+	// destination. The install path is always a concrete agent's own
+	// directory — the only place the runtimes look for skills — so
+	// there is nothing for an "all" path to mean.
 	for agent, pathTpl := range m.Metadata.InstallPaths {
-		if !IsValidAgent(agent) {
-			return fmt.Errorf("skills: metadata.install_paths key %q is not a valid agent (want: opencode, openclaw, hermes, all)", agent)
+		if !IsConcreteAgent(agent) {
+			return fmt.Errorf("skills: metadata.install_paths key %q is not a concrete agent (want: opencode, openclaw, hermes)", agent)
 		}
 		if pathTpl == "" {
 			return fmt.Errorf("skills: metadata.install_paths[%s] is empty", agent)

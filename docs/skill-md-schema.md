@@ -117,22 +117,25 @@ for the closed enum and what each does.
 
 `install_paths.<agent>` overrides the built-in agent→path table
 (`DefaultAgentInstallPaths`); the key must be one of `opencode`,
-`openclaw`, `hermes`, or `all`. The `all` key is the universal-sentinel
-override: when paired with `agents: [all]`, the value replaces the
-central fallback path at install time. Useful when an operator wants
-the skill to land in a custom central tree (e.g.
-`/srv/skills/$NAME`) without giving up the "system-wide" semantic:
+`openclaw`, `hermes`. There is deliberately **no `all` key**: `all`
+declares the skill's audience (every runtime supports it), not a
+destination — the install path is always a concrete runtime's own
+directory, which is the only place that runtime looks for skills.
 
 ```yaml
 agents: [all]
 metadata:
   install_method: zip-extract
   install_paths:
-    all: "/srv/agent-skills/$NAME"
+    opencode: "$HOME/.config/opencode/skills/$NAME"
 ```
 
 The value must contain `$NAME` (so the template expands deterministically
 per skill). `$HOME` is not required — some setups use shared system trees.
+
+See [docs/skills-install-layout.md](skills-install-layout.md) for how
+`agents:` (the audience) and the installer's `--agents` (the target)
+combine.
 
 ## What `source` and `channel` are NOT
 
@@ -158,8 +161,8 @@ WARN: SKILL.md has a 'source' field but it's ignored; use --source flag instead
 
 `metadata.install_method` selects the install pipeline (see
 [skill-catalog.md](skill-catalog.md#install-methods)). `agents`
-declares which runtimes the skill targets; `metadata.install_paths`
-overrides the built-in agent→path table.
+declares which runtimes support the skill (its audience);
+`metadata.install_paths` overrides the built-in agent→path table.
 
 The CLI's `install` command (in schema v2.0) handles the per-agent
 fan-out:

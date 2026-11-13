@@ -37,7 +37,6 @@ Schema v2.0's built-in default paths:
 | `opencode` | `~/.config/opencode/skills/<name>/<version>/` |
 | `openclaw` | `~/.openclaw/skills/<name>/<version>/` |
 | `hermes` | `~/.hermes/optional-skills/<name>/<version>/` |
-| `all` (fallback) | `~/.local/share/agentpkg/skills/<name>/<version>/` |
 
 Override any of these in SKILL.md:
 
@@ -46,6 +45,37 @@ metadata:
   install_paths:
     opencode: "$HOME/work/skills/$NAME"
 ```
+
+### `agents:` (the audience) vs `--agents` (the target)
+
+SKILL.md's `agents:` field declares the skill's **audience** — which
+runtimes support it. It never names a destination:
+
+- concrete agents (`agents: [opencode, hermes]`) — only those runtimes
+  support the skill.
+- the `all` sentinel (`agents: [all]`) — *every* runtime supports it.
+
+`agentpkg skills install --agents <csv>` says which runtime(s) the skill is
+being installed **for** on this machine. The two combine into the install
+targets:
+
+| SKILL.md `agents:` | `--agents` | installed for |
+|---|---|---|
+| `[opencode, hermes]` | *(omitted)* | opencode, hermes |
+| `[opencode, hermes]` | `hermes` | hermes |
+| `[opencode, hermes]` | `openclaw` | *error* — the skill doesn't declare openclaw |
+| `[all]` | `opencode` | opencode |
+| `[all]` | *(omitted)* | every known runtime |
+
+The payload always lands in a **concrete runtime's own directory** — the only
+place that runtime looks for skills. opencode discovers skills under
+`~/.config/opencode/skills/`, `~/.claude/skills/` and `~/.agents/skills/`
+(plus anything registered via the `skills.paths` / `skills.urls` config
+keys), so a skill installed for opencode is immediately visible to it.
+
+There is no separate "all" install path: `metadata.install_paths` has no
+`all` key, and `all` never appears in `state.json`'s `agents` /
+`resolved_paths` — those record the concrete targets.
 
 The full catalog reference is in [skill-catalog.md](skill-catalog.md).
 
@@ -122,7 +152,7 @@ Top-level fields:
 | `channel` | Channel of the current version (`stable`, `beta`, `edge`, `internal`). |
 | `target_dir` | Absolute path of `<target-dir>/<name>`. |
 | `install_method` | Schema v2.0: which pipeline was used (`zip-extract` / `pip-wheel` / `npm-pack` / `tarball`). |
-| `agents` | Schema v2.0: runtimes this skill was installed for. Empty list is normalized to `["all"]`. |
+| `agents` | Schema v2.0: the concrete runtimes this skill was installed for. Never contains the `all` sentinel — that one only describes the skill's audience. |
 | `resolved_paths` | Schema v2.0: per-agent on-disk path actually written. |
 | `installed_versions` | Map keyed by version string. Each entry's fields: |
 

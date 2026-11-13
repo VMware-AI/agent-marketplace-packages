@@ -1,5 +1,7 @@
 package skills
 
+import "sort"
+
 // Catalog of allowed values for SKILL.md frontmatter fields introduced
 // in schema v2.0:
 //
@@ -8,8 +10,11 @@ package skills
 //     *agent type*. A "dev" skill (helper for coding) can ship inside an
 //     "automation"-typed agent; the two vocabularies do not collapse.
 //   - Agents: which downstream runtime recognizes the skill payload.
-//     "all" is a sentinel meaning "no agent-specific install path; use the
-//     central fallback". Combining "all" with concrete agents is rejected
+//     "all" is a sentinel meaning "every runtime supports this skill" —
+//     it is an AUDIENCE declaration, not an install destination. The
+//     payload always lands in a concrete agent's own directory (see
+//     DefaultAgentInstallPaths), which is the only place the runtimes
+//     look for skills. Combining "all" with concrete agents is rejected
 //     by Validate.
 //   - InstallMethods: how `agentpkg skills install` should materialize
 //     the artifact on the target machine.
@@ -70,16 +75,16 @@ var DefaultAgentInstallPaths = map[string]string{
 	"hermes":   "$HOME/.hermes/optional-skills/$NAME",
 }
 
-// FallbackPath — install target used when (a) agents=["all"] or (b)
-// install_method is pip-wheel / npm-pack / tarball (system-wide).
-// $HOME is expanded at runtime.
-const FallbackPath = "$HOME/.local/share/agentpkg/skills/$NAME"
-
 // IsValidCategory reports whether s is an allowed category ID.
 func IsValidCategory(s string) bool { return validCategories[s] }
 
 // IsValidAgent reports whether s is an allowed agent ID (incl. "all").
 func IsValidAgent(s string) bool { return validAgents[s] }
+
+// IsConcreteAgent reports whether s names a real runtime — i.e. an agent
+// ID that owns an install path. The "all" sentinel is an audience
+// declaration, never an install target, so it is NOT concrete.
+func IsConcreteAgent(s string) bool { return validAgents[s] && s != "all" }
 
 // IsValidInstallMethod reports whether s is an allowed install_method.
 func IsValidInstallMethod(s string) bool { return validInstallMethods[s] }
@@ -88,6 +93,10 @@ func IsValidInstallMethod(s string) bool { return validInstallMethods[s] }
 // Per Validate, "all" cannot be combined with concrete agents, so the
 // only "valid" all-form is the singleton.
 //
+// "all" declares the skill's audience ("every runtime supports this"),
+// NOT an install target. Callers resolve it to the concrete agents the
+// skill is being installed for — see ResolveInstallTargets in the CLI.
+//
 // Returns false for nil/empty so callers can treat it as "not the all
 // sentinel" — they then iterate per-agent paths themselves.
 func IsAllAgents(agents []string) bool {
@@ -95,8 +104,8 @@ func IsAllAgents(agents []string) bool {
 }
 
 // KnownAgents returns the set of agent IDs (excludes "all", which is a
-// sentinel rather than a real agent). Order is not significant — callers
-// that need deterministic output should sort the result.
+// sentinel rather than a real agent). The result is sorted so callers
+// get a deterministic order.
 func KnownAgents() []string {
 	out := make([]string, 0, len(validAgents))
 	for a := range validAgents {
@@ -105,5 +114,6 @@ func KnownAgents() []string {
 		}
 		out = append(out, a)
 	}
+	sort.Strings(out)
 	return out
 }

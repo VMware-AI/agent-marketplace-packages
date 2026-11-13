@@ -618,6 +618,106 @@ func TestInstall_AgentsFilter_EmptyAfterParseIsRejected(t *testing.T) {
 	}
 }
 
+// TestInstall_AgentsFilter_AllAudienceResolvesToTheSelectedAgent covers
+// the "all" audience meeting a concrete --agents selection.
+//
+// SKILL.md's `agents: [all]` says "every runtime supports this skill" —
+// it names no destination. The caller's --agents says which runtime the
+// skill is being installed FOR, so the payload must land in THAT
+// runtime's own skills directory.
+//
+// Before this model existed the install either died with
+// "--agents filter [opencode] matched none of SKILL.md agents [all]" or
+// (once that was softened) installed into a central agentpkg stash that
+// no runtime ever reads.
+func TestInstall_AgentsFilter_AllAudienceResolvesToTheSelectedAgent(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("HOME", dir)
+	home, _ := os.UserHomeDir()
+
+	zipBytes, _ := makeSkillZip(t, "---\nname: hello\ndescription: Says hello to the user in a friendly manner.\nversion: \"1.0.0\"\ncategory: dev\nagents: [all]\n---\nbody\n")
+	zipPath := writeZipFile(t, dir, "hello-community-1.0.0.zip", zipBytes)
+
+	cmd := NewSkillsInstallCmd()
+	out, err := runCmd(t, cmd, "hello", "--from", zipPath, "--agents", "opencode")
+	if err != nil {
+		t.Fatalf("install --agents opencode on an agents:[all] skill: %v\n%s", err, out)
+	}
+
+	// The payload lands in the selected runtime's own skills directory.
+	want := filepath.Join(home, ".config", "opencode", "skills", "hello", "1.0.0", "SKILL.md")
+	if _, err := os.Stat(want); err != nil {
+		t.Errorf("skill not installed into opencode's skills dir: %v", err)
+	}
+	// No payload in the central stash — there is no "all" install path.
+	// (The stash directory itself still exists: it's the state root,
+	// where state.json lives.)
+	if _, err := os.Stat(filepath.Join(home, ".local", "share", "agentpkg", "skills", "hello", "1.0.0")); !os.IsNotExist(err) {
+		t.Errorf("payload should not be installed into the central stash: %v", err)
+	}
+
+	// state.json records the concrete target, not the "all" audience.
+	stateBytes, err := os.ReadFile(filepath.Join(home, ".local", "share", "agentpkg", "skills", "hello", "state.json"))
+	if err != nil {
+		t.Fatalf("state.json missing: %v", err)
+	}
+	var st SkillInstallState
+	if err := json.Unmarshal(stateBytes, &st); err != nil {
+		t.Fatal(err)
+	}
+	if len(st.Agents) != 1 || st.Agents[0] != "opencode" {
+		t.Errorf("state agents = %v, want [opencode]", st.Agents)
+	}
+	if len(st.ResolvedPaths) != 1 {
+		t.Errorf("ResolvedPaths has %d entries, want 1: %+v", len(st.ResolvedPaths), st.ResolvedPaths)
+	}
+	if _, ok := st.ResolvedPaths["opencode"]; !ok {
+		t.Errorf("missing ResolvedPaths[opencode]: %+v", st.ResolvedPaths)
+	}
+}
+
+// TestInstall_AgentsFilter_AllAudienceHonoursConcreteInstallPath checks
+// that a per-agent install_paths override still applies when the skill's
+// audience is "all" and the caller names the agent.
+func TestInstall_AgentsFilter_AllAudienceHonoursConcreteInstallPath(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("HOME", dir)
+	home, _ := os.UserHomeDir()
+
+	zipBytes, _ := makeSkillZip(t, "---\nname: hello\ndescription: Says hello to the user in a friendly manner.\nversion: \"1.0.0\"\ncategory: dev\nagents: [all]\nmetadata:\n  install_method: zip-extract\n  install_paths:\n    opencode: \"$HOME/.claude/skills/$NAME\"\n---\nbody\n")
+	zipPath := writeZipFile(t, dir, "hello-community-1.0.0.zip", zipBytes)
+
+	cmd := NewSkillsInstallCmd()
+	out, err := runCmd(t, cmd, "hello", "--from", zipPath, "--agents", "opencode")
+	if err != nil {
+		t.Fatalf("install --agents opencode on an agents:[all] skill: %v\n%s", err, out)
+	}
+
+	if _, err := os.Stat(filepath.Join(home, ".claude", "skills", "hello", "1.0.0", "SKILL.md")); err != nil {
+		t.Errorf("install_paths.opencode override not honoured: %v", err)
+	}
+}
+
+// TestInstall_AgentsFilter_NoOverlapStillErrors is the regression guard for
+// the "all" resolution: a skill that declares concrete agents and a
+// selection that matches none of them must still fail loudly (the author
+// declared the audience, and the caller's selection is a genuine
+// mismatch — not the "all" case).
+func TestInstall_AgentsFilter_NoOverlapStillErrors(t *testing.T) {
+	dir := t.TempDir()
+	zipBytes, _ := makeSkillZip(t, "---\nname: hello\ndescription: Says hello to the user in a friendly manner.\nversion: \"1.0.0\"\ncategory: dev\nagents: [opencode]\n---\nbody\n")
+	zipPath := writeZipFile(t, dir, "hello-community-1.0.0.zip", zipBytes)
+
+	cmd := NewSkillsInstallCmd()
+	_, err := runCmd(t, cmd, "hello", "--from", zipPath, "--agents", "hermes")
+	if err == nil {
+		t.Fatal("expected error for a filter that matches no declared agent, got nil")
+	}
+	if !strings.Contains(err.Error(), "matched none of SKILL.md agents") {
+		t.Errorf("unexpected error message: %v", err)
+	}
+}
+
 // TestResolveAgentID sanity-check the alias mapping. Lives in
 // install_test.go because the only consumer is the install flow today;
 // if --agents is added to uninstall later, move this to a shared

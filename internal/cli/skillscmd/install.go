@@ -82,16 +82,30 @@ Use --from to install from a local zip file (skip the registry entirely).
 --from is single-skill only — combine it with multiple <name> args to
 get a clear error rather than ambiguous pairing.
 
-Use --agents to restrict fan-out to a subset of the agents declared
-in SKILL.md's 'agents:' field. Values are SKILL.md market-name IDs
-(matching DefaultAgentInstallPaths keys) — pass "openclaw",
-"opencode", or "hermes". Comma-separated. When omitted, the skill
-fans out to every agent in SKILL.md (the historical behavior).
+Use --agents to say which runtime(s) the skill is being installed FOR.
+Values are SKILL.md market-name IDs (matching DefaultAgentInstallPaths
+keys) — pass "openclaw", "opencode", or "hermes". Comma-separated. When
+omitted, the skill installs for the agents SKILL.md declares.
 
 --agents is the recommended way to install a skill "for the single
 agent running on this VM" without littering orphan paths under the
 other agents' directories. Each value goes through skills.ResolveAgentID
 so marketplace-package names like "hermes-agent" are accepted too.
+
+SKILL.md's 'agents:' field declares the skill's AUDIENCE — which
+runtimes support it — while --agents says which runtime(s) it is
+installed for on this machine. The two combine as follows:
+
+  * SKILL.md declares concrete agents (e.g. [opencode, hermes]): the
+    skill is installed for those, narrowed by --agents. A runtime the
+    skill doesn't declare support for never receives it.
+  * SKILL.md declares the "all" sentinel: the skill is supported by
+    every runtime, and --agents (or every known runtime when --agents
+    is omitted) decides where it lands.
+
+Either way the payload always ends up in a concrete runtime's own
+skills directory — the only place that runtime looks for skills. There
+is no separate "all" install path.
 
 Batch mode: pass several <name> arguments to install them all in one
 invocation. Each skill is processed independently; the exit code is
@@ -381,29 +395,24 @@ func runInstall(cmd *cobra.Command, p installParams) error {
 		}
 	}
 
-	// 4a. Apply the --agents filter (when provided). Translate each
-	// marketplace name to its agent ID via ResolveAgentID so values
-	// like "hermes-agent" map to the canonical "hermes" key. Then
-	// intersect with sv.Agents; entries not declared in SKILL.md's
-	// agents: field are silently dropped (the author of the SKILL is
-	// authoritative — we never fan out beyond what the manifest allows).
-	if len(p.Agents) > 0 {
-		wanted := make(map[string]bool, len(p.Agents))
-		for _, raw := range p.Agents {
-			wanted[skills.ResolveAgentID(raw)] = true
-		}
-		kept := sv.Agents[:0]
-		for _, a := range sv.Agents {
-			if wanted[a] {
-				kept = append(kept, a)
-			}
-		}
-		if len(kept) == 0 {
-			return fmt.Errorf("--agents filter %v matched none of SKILL.md agents %v",
-				p.Agents, sv.Agents)
-		}
-		sv.Agents = kept
+	// 4a. Resolve the install TARGETS.
+	//
+	// SKILL.md's `agents:` field declares the skill's AUDIENCE — which
+	// runtimes support it. The caller's --agents says which runtime(s)
+	// the skill is being installed FOR. ResolveInstallTargets combines
+	// the two into the concrete agent list every later step works with
+	// (ResolveTargets, state.json, uninstall).
+	//
+	// The "all" audience means "every runtime supports this skill" and
+	// names no destination of its own — the caller's selection decides
+	// where the payload lands. There is no separate "all" install path:
+	// a skill always ends up in a concrete runtime's own skills
+	// directory, which is the only place that runtime looks for skills.
+	targetAgents, err := skills.ResolveInstallTargets(sv.Agents, p.Agents)
+	if err != nil {
+		return err
 	}
+	sv.Agents = targetAgents
 
 	// 5. Resolve install targets from sv.Agents + sv.InstallPaths.
 	//    The staging parent lives under stateDir so it cleans up with
@@ -491,9 +500,13 @@ func runInstall(cmd *cobra.Command, p installParams) error {
 	if st.InstallMethod == "" {
 		st.InstallMethod = methodZipExtract
 	}
+	// The resolved concrete targets — not the skill's declared audience.
+	// A skill that declares "all" is recorded as the agent(s) it was
+	// actually installed for, so uninstall knows which directories to
+	// clean up.
 	st.Agents = sv.Agents
 	if len(st.Agents) == 0 {
-		st.Agents = []string{"all"}
+		return fmt.Errorf("skills: no target agent resolved for %q", p.Name)
 	}
 	st.ResolvedPaths = make(map[string]string, len(targets))
 	for _, t := range targets {
